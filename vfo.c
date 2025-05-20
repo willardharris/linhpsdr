@@ -1923,59 +1923,46 @@ void update_vfo(RECEIVER *rx) {
 // now only used by meter.c
 
 void SetColour(cairo_t *cr, const int colour) {
-
   switch(colour) {
-    case BACKGROUND: {
-      cairo_set_source_rgb (cr, 0.1, 0.1, 0.1);
+    case BACKGROUND:
+      cairo_set_source_rgb(cr, 0.10, 0.10, 0.10);
       break;
-    }
-    case OFF_WHITE: {
-      cairo_set_source_rgb (cr, 0.9, 0.9, 0.9);
+    case OFF_WHITE:
+      cairo_set_source_rgb(cr, 0.90, 0.90, 0.90);
       break;
-    }
-    case BOX_ON: {
-      cairo_set_source_rgb (cr, 0.624, 0.427, 0.690);
+    case BOX_ON:
+      cairo_set_source_rgb(cr, 0.00, 0.50, 0.00);
       break;
-    }
-    case BOX_OFF: {
-      cairo_set_source_rgb (cr, 0.2, 0.2,       0.2);
+    case BOX_OFF:
+      cairo_set_source_rgb(cr, 0.20, 0.20, 0.20);
       break;
-    }
-    case TEXT_A: {
-      cairo_set_source_rgb(cr, 0.929, 0.616, 0.502);
+    case TEXT_A:
+      cairo_set_source_rgb(cr, 0.92, 0.61, 0.50);
       break;
-    }
-    case TEXT_B: {
-      //light blue
-      cairo_set_source_rgb(cr, 0.639, 0.800, 0.820);
+    case TEXT_B:
+      cairo_set_source_rgb(cr, 0.64, 0.80, 0.82);
       break;
-    }
-    case TEXT_C: {
-      // Pale orange
-      cairo_set_source_rgb(cr, 0.929,   0.616,  0.502);
+    case TEXT_C:
+      cairo_set_source_rgb(cr, 0.90, 0.90, 0.90);
       break;
-    }
-    case WARNING: {
-      // Pale red
-        cairo_set_source_rgb (cr, 0.851, 0.271, 0.271);
+    case WARNING:
+      cairo_set_source_rgb(cr, 0.85, 0.27, 0.27);
       break;
-    }
-    case DARK_LINES: {
-      // Dark grey
-        cairo_set_source_rgb (cr, 0.3, 0.3, 0.3);
+    case DARK_LINES:
+      cairo_set_source_rgb(cr, 0.30, 0.30, 0.30);
       break;
-    }
-    case DARK_TEXT: {
-      cairo_set_source_rgb(cr, 0.7, 0.7, 0.7);
+    case DARK_TEXT:
+      cairo_set_source_rgb(cr, 0.70, 0.70, 0.70);
       break;
-    }
-    case INFO_ON: {
-      cairo_set_source_rgb(cr, 0.15, 0.58, 0.6);
+    case INFO_ON:
+      cairo_set_source_rgb(cr, 0.15, 0.58, 0.60);
       break;
-    }
-    case INFO_OFF: {
-      cairo_set_source_rgb(cr, 0.2, 0.2, 0.2);
+    case INFO_OFF:
+      cairo_set_source_rgb(cr, 0.20, 0.20, 0.20);
       break;
-    }
+    default:
+      // Fallback: black
+      cairo_set_source_rgb(cr, 0.00, 0.00, 0.00);
+      break;
   }
 }

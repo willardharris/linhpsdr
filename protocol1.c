@@ -132,6 +132,9 @@ static unsigned char output_buffer[OZY_BUFFER_SIZE];
 static int output_buffer_index=8;
 static int tx_output_buffer_index=8;
 
+static long expected_sequence = -1; // Global sequence tracker
+static int sequence_error_count = 0; // Global error counter
+
 static int command=1;
 
 enum {
@@ -312,134 +315,125 @@ static gpointer ozy_ep6_rx_thread(gpointer arg) {
 #endif
 
 static void start_protocol1_thread() {
-  fprintf(stderr,"protocol1 starting receive thread: buffer_size=%d output_buffer_size=%d\n",radio->buffer_size,output_buffer_size);
-
-  switch(radio->discovered->device) {
-#ifdef USBOZY
-    case DEVICE_OZY:
-      break;
-#endif
-    default:
-      data_socket=socket(PF_INET,SOCK_DGRAM,IPPROTO_UDP);
-      if(data_socket<0) {
-        perror("protocol1: create socket failed for data_socket\n");
-        exit(-1);
-      }
-
-      int optval = 1;
-      if(setsockopt(data_socket, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval))<0) {
-        perror("data_socket: SO_REUSEADDR");
-      }
-      if(setsockopt(data_socket, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval))<0) {
-        perror("data_socket: SO_REUSEPORT");
-      }
-
-      // bind to the interface
-      if(bind(data_socket,(struct sockaddr*)&radio->discovered->info.network.interface_address,radio->discovered->info.network.interface_length)<0) {
-        perror("protocol1: bind socket failed for data_socket\n");
-        exit(-1);
-      }
-
-      memcpy(&data_addr,&radio->discovered->info.network.address,radio->discovered->info.network.address_length);
-      data_addr_length=radio->discovered->info.network.address_length;
-      data_addr.sin_port=htons(DATA_PORT);
-      break;
-  }
-
-  receive_thread_id = g_thread_new( "protocol1", receive_thread, NULL);
-  if( ! receive_thread_id )
-  {
-    fprintf(stderr,"g_thread_new failed on receive_thread\n");
-    exit( -1 );
-  }
-  fprintf(stderr, "receive_thread: id=%p\n",receive_thread_id);
-
-}
-
-static gpointer receive_thread(gpointer arg) {
-  struct sockaddr_in addr;
-  socklen_t length;
-  unsigned char buffer[2048];
-  int bytes_read;
-  int ep;
-  long sequence;
-
-  fprintf(stderr, "protocol1: receive_thread\n");
-  running=TRUE;
-
-  length=sizeof(addr);
-  while(running) {
+    fprintf(stderr,"protocol1 starting receive thread: buffer_size=%d output_buffer_size=%d\n",radio->buffer_size,output_buffer_size);
 
     switch(radio->discovered->device) {
 #ifdef USBOZY
-      case DEVICE_OZY:
-        // should not happen
-        break;
+        case DEVICE_OZY:
+            break;
 #endif
+        default:
+            data_socket=socket(PF_INET,SOCK_DGRAM,IPPROTO_UDP);
+            if(data_socket<0) {
+                perror("protocol1: create socket failed for data_socket\n");
+                exit(-1);
+            }
 
-      default:
+            int rcvbufsize = 1048576; // 1 MB
+            if(setsockopt(data_socket, SOL_SOCKET, SO_RCVBUF, &rcvbufsize, sizeof(rcvbufsize))<0) {
+                perror("data_socket: SO_RCVBUF");
+            }
+
+            int optval = 1;
+            if(setsockopt(data_socket, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval))<0) {
+                perror("data_socket: SO_REUSEADDR");
+            }
+            if(setsockopt(data_socket, SOL_SOCKET, SO_REUSEPORT, &optval, sizeof(optval))<0) {
+                perror("data_socket: SO_REUSEPORT");
+            }
+
+            if(bind(data_socket,(struct sockaddr*)&radio->discovered->info.network.interface_address,radio->discovered->info.network.interface_length)<0) {
+                perror("protocol1: bind socket failed for data_socket\n");
+                exit(-1);
+            }
+
+            memcpy(&data_addr,&radio->discovered->info.network.address,radio->discovered->info.network.address_length);
+            data_addr_length=radio->discovered->info.network.address_length;
+            data_addr.sin_port=htons(DATA_PORT);
+            break;
+    }
+
+    receive_thread_id = g_thread_new( "protocol1", receive_thread, NULL);
+    if( ! receive_thread_id )
+    {
+        fprintf(stderr,"g_thread_new failed on receive_thread\n");
+        exit( -1 );
+    }
+    fprintf(stderr, "receive_thread: id=%p\n",receive_thread_id);
+}
+
+static gpointer receive_thread(gpointer arg) {
+    struct sockaddr_in addr;
+    socklen_t length;
+    unsigned char buffer[2048];
+    int bytes_read;
+    int ep;
+    long sequence;
+
+    fprintf(stderr, "protocol1: receive_thread\n");
+    running=TRUE;
+
+    length=sizeof(addr);
+    while(running) {
         bytes_read=recvfrom(data_socket,buffer,sizeof(buffer),0,(struct sockaddr*)&addr,&length);
         if(bytes_read<0) {
-          if(errno==EAGAIN) {
-            error_handler("protocol1: receiver_thread: recvfrom socket failed","Radio not sending data");
-          } else {
-            error_handler("protocol1: receiver_thread: recvfrom socket failed",strerror(errno));
-          }
-          //running=FALSE;
-          continue;
+            fprintf(stderr, "receive_thread: recvfrom failed: %s\n", strerror(errno));
+            continue;
         }
 
         if(buffer[0]==0xEF && buffer[1]==0xFE) {
-          switch(buffer[2]) {
-            case 1:
-              // get the end point
-              ep=buffer[3]&0xFF;
-
-              // get the sequence number
-              sequence=((buffer[4]&0xFF)<<24)+((buffer[5]&0xFF)<<16)+((buffer[6]&0xFF)<<8)+(buffer[7]&0xFF);
-
-              switch(ep) {
-                case 6: // EP6
-                  // process the data
-                  process_ozy_input_buffer(&buffer[8]);
-                  process_ozy_input_buffer(&buffer[520]);
-                  full_tx_buffer(radio->transmitter);
-                  break;
-                case 4: // EP4
-                  ep4_sequence++;
-                  if(sequence!=ep4_sequence) {
-                    ep4_sequence=sequence;
-                  } else {
-                    //int seq=(int)(sequence%32L);
-                    if((sequence%32L)==0L) {
-                      reset_wideband_buffer_index(radio->wideband);
+            switch(buffer[2]) {
+                case 1:
+                    ep=buffer[3]&0xFF;
+                    sequence=((buffer[4]&0xFF)<<24)+((buffer[5]&0xFF)<<16)+((buffer[6]&0xFF)<<8)+(buffer[7]&0xFF);
+                    if(expected_sequence == -1) {
+                        expected_sequence = sequence; // Sync with first packet
+                    } else if(sequence != expected_sequence) {
+                        if(sequence_error_count < 10) {
+                            fprintf(stderr, "protocol1: sequence error, expected=%ld received=%ld\n",
+                                    expected_sequence, sequence);
+                            sequence_error_count++;
+                        }
+                        expected_sequence = sequence; // Resync
                     }
-                    process_wideband_buffer(&buffer[8]);
-                    process_wideband_buffer(&buffer[520]);
-                  }
-                  break;
+                    expected_sequence++;
+                    switch(ep) {
+                        case 6: // EP6
+                            process_ozy_input_buffer(&buffer[8]);
+                            process_ozy_input_buffer(&buffer[520]);
+                            full_tx_buffer(radio->transmitter);
+                            break;
+                        case 4: // EP4
+                            ep4_sequence++;
+                            if(sequence!=ep4_sequence) {
+                                ep4_sequence=sequence;
+                            } else {
+                                if((sequence%32L)==0L) {
+                                    reset_wideband_buffer_index(radio->wideband);
+                                }
+                                process_wideband_buffer(&buffer[8]);
+                                process_wideband_buffer(&buffer[520]);
+                            }
+                            break;
+                        default:
+                            fprintf(stderr,"unexpected EP %d length=%d\n",ep,bytes_read);
+                            break;
+                    }
+                    break;
+                case 2:
+                    fprintf(stderr,"unexpected discovery response\n");
+                    break;
                 default:
-                  fprintf(stderr,"unexpected EP %d length=%d\n",ep,bytes_read);
-                  break;
-              }
-              break;
-            case 2:  // response to a discovery packet
-              fprintf(stderr,"unexepected discovery response when not in discovery mode\n");
-              break;
-            default:
-              fprintf(stderr,"unexpected packet type: 0x%02X\n",buffer[2]);
-              break;
-          }
+                    fprintf(stderr,"unexpected packet type: 0x%02X\n",buffer[2]);
+                    break;
+            }
         } else {
-          fprintf(stderr,"received bad header bytes on data port %02X,%02X\n",buffer[0],buffer[1]);
+            fprintf(stderr,"received bad header bytes: %02X,%02X\n",buffer[0],buffer[1]);
         }
-        break;
     }
 
-  }
-
-  fprintf(stderr,"EXIT: protocol1: receive_thread\n");
-  return NULL;
+    fprintf(stderr,"EXIT: protocol1: receive_thread\n");
+    return NULL;
 }
 
 static void process_control_bytes() {
@@ -1727,27 +1721,20 @@ static int metis_write(unsigned char ep,unsigned char* buffer,int length) {
 }
 
 static void metis_restart() {
-fprintf(stderr,"metis_restart\n");
-  // reset metis frame
-  metis_offset=8;
-
-  // reset current rx
-  current_rx=0;
-
-  // send commands twice
-  command=1;
-  do {
-    ozy_send_buffer();
-  } while (command!=1);
-
-  do {
-    ozy_send_buffer();
-  } while (command!=1);
-
-  usleep(20000);
-
-  // start the data flowing
-  metis_start_stop(3); // IQ data (wideband data disabled)
+    fprintf(stderr,"metis_restart\n");
+    metis_offset=8;
+    current_rx=0;
+    expected_sequence = -1; // Reset sequence
+    sequence_error_count = 0; // Reset error counter
+    command=1;
+    do {
+        ozy_send_buffer();
+    } while (command!=1);
+    do {
+        ozy_send_buffer();
+    } while (command!=1);
+    usleep(20000);
+    metis_start_stop(3);
 }
 
 static void metis_start_stop(int command) {

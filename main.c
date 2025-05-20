@@ -71,7 +71,7 @@ static GtkWidget *image;
 static DISCOVERED *d=NULL;
 
 RADIO *radio;
-gboolean opengl=FALSE;
+gboolean opengl=FALSE; 
 
 enum {
   NAME_COLUMN,
@@ -501,9 +501,9 @@ static void activate_hpsdr(GtkApplication *app, gpointer data) {
   g_print("opengl: %d\n",opengl);
 
 //#ifdef __APPLE__
-  sprintf(png_path,"/usr/local/share/linhpsdr/hpsdr.png");
+//sprintf(png_path,"/usr/local/share/linhpsdr/hpsdr.png");
 //#else
-//  sprintf(png_path,"/usr/share/linhpsdr/hpsdr.png");
+  sprintf(png_path,"/usr/share/linhpsdr/hpsdr.png");
 //#endif
   main_window = gtk_application_window_new (app);
   sprintf(title,"LinHPSDR (%s)",version);

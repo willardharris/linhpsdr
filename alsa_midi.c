@@ -42,7 +42,7 @@ static void* midi_thread(void *);
 
 MIDI_DEVICE midi_devices[MAX_MIDI_DEVICES];
 int n_midi_devices;
-int running;
+int running2;
 
 static char portname[64];
 
@@ -81,14 +81,14 @@ static void *midi_thread(void *arg) {
     }
     */
 
-    running=1;
+    running2=1;
 
     snd_rawmidi_read(input, NULL, 0); /* trigger reading */
 
     npfds = snd_rawmidi_poll_descriptors_count(input);
     pfds = alloca(npfds * sizeof(struct pollfd));
     snd_rawmidi_poll_descriptors(input, pfds, npfds);
-    while(running) {
+    while(running2) {
 	ret = poll(pfds, npfds, 250);
 	if (ret < 0) {
             fprintf(stderr,"poll failed: %s\n", strerror(errno));
@@ -96,7 +96,7 @@ static void *midi_thread(void *arg) {
 	    usleep(250000);
 	}
 	if (ret <= 0) continue;  // nothing arrived, do next poll()
-	if(!running) break;
+	if(!running2) break;
 
 	if ((ret = snd_rawmidi_poll_descriptors_revents(input, pfds, npfds, &revents)) < 0) {
             fprintf(stderr,"cannot get poll events: %s\n", snd_strerror(errno));
@@ -204,7 +204,7 @@ void close_midi_device() {
     fprintf(stderr,"%s\n",__FUNCTION__);
     if(input!=NULL) {
       fprintf(stderr,"%s: snd_rawmidi_close\n",__FUNCTION__);
-      running=0;
+      running2=0;
       if((ret = snd_rawmidi_close(input)) < 0) {
         fprintf(stderr,"%s: cannot close port: %s\n",__FUNCTION__, snd_strerror(ret));
       }

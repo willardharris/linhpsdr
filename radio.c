@@ -624,44 +624,96 @@ void delete_wideband(WIDEBAND *w) {
 }
 
 void delete_receiver(RECEIVER *rx) {
-  int i;
-  for(i=0;i<radio->discovered->supported_receivers;i++) {
-    if(radio->receiver[i]==rx) {
-      if(radio->discovered->protocol==PROTOCOL_1) {
-        protocol1_stop();
-      }
-      if(radio->transmitter!=NULL && radio->transmitter->rx==rx) {
-        radio->transmitter->rx=NULL;
-      }
-      radio->receiver[i]=NULL;
-      radio->receivers--;
-      if(radio->discovered->protocol==PROTOCOL_1) {
-        protocol1_run();
-      }
-g_print("delete_receiver: receivers now %d\n",radio->receivers);
-      break;
-    }
-  }
+    if (!rx) return;
 
-  if(radio->transmitter!=NULL && radio->transmitter->rx==NULL) {
-    if(radio->receivers>0) {
-      for(i=0;i<radio->discovered->supported_receivers;i++) {
-        if(radio->receiver[i]!=NULL) {
-          radio->transmitter->rx=radio->receiver[i];
-          update_vfo(radio->receiver[i]);
-          break;
+    int ch = rx->channel;
+    g_print("delete_receiver: channel=%d\n", ch);
+
+    // Stop and clean up DSP and protocol for this receiver
+    if (radio->receiver[ch] == rx) {
+        if (radio->discovered->protocol == PROTOCOL_1) {
+            protocol1_stop(); // Pause protocol1 while cleaning
         }
-      }
-    } else {
-      // no more receivers
-    }
-  }
 
-  gtk_widget_set_sensitive(add_receiver_b,radio->receivers<radio->discovered->supported_receivers);
-  if(radio->dialog) {
-    gtk_widget_destroy(radio->dialog);
-    radio->dialog=NULL;
-  }
+        // Remove receiver from list
+        radio->receiver[ch] = NULL;
+        radio->receivers--;
+
+        if (radio->discovered->protocol == PROTOCOL_1) {
+            protocol1_run(); // Restart protocol1 with updated list
+        }
+    }
+
+    // Reassign transmitter RX if needed
+    if (radio->transmitter && radio->transmitter->rx == rx) {
+        radio->transmitter->rx = NULL;
+        for (int i = 0; i < radio->discovered->supported_receivers; i++) {
+            if (radio->receiver[i]) {
+                radio->transmitter->rx = radio->receiver[i];
+                update_vfo(radio->receiver[i]);
+                break;
+            }
+        }
+    }
+
+    // GTK button / dialog cleanup
+    gtk_widget_set_sensitive(add_receiver_b, radio->receivers < radio->discovered->supported_receivers);
+    if (radio->dialog) {
+        gtk_widget_destroy(radio->dialog);
+        radio->dialog = NULL;
+    }
+
+    // === ?? THREADS & QUEUES ===
+    ReceiverThreadContext *ctx = &rx->thread_context;
+    ctx->running = FALSE;
+
+    if (ctx->iq_queue) g_async_queue_push(ctx->iq_queue, GINT_TO_POINTER(-1));
+    if (ctx->render_queue) g_async_queue_push(ctx->render_queue, GINT_TO_POINTER(-1));
+
+    if (ctx->wdsp_thread) {
+        g_thread_join(ctx->wdsp_thread);
+        ctx->wdsp_thread = NULL;
+    }
+    if (ctx->render_thread) {
+        g_thread_join(ctx->render_thread);
+        ctx->render_thread = NULL;
+    }
+
+    if (ctx->iq_queue) {
+        g_async_queue_unref(ctx->iq_queue);
+        ctx->iq_queue = NULL;
+    }
+    if (ctx->render_queue) {
+        g_async_queue_unref(ctx->render_queue);
+        ctx->render_queue = NULL;
+    }
+
+    g_mutex_clear(&ctx->render_mutex);
+
+    // === ?? BUFFERS ===
+    if (rx->pixel_samples) g_free(rx->pixel_samples);
+    if (rx->iq_input_buffer) g_free(rx->iq_input_buffer);
+    if (rx->audio_output_buffer) g_free(rx->audio_output_buffer);
+    if (rx->audio_buffer) g_free(rx->audio_buffer);
+    if (rx->local_audio_buffer) g_free(rx->local_audio_buffer);
+    if (rx->audio_name) g_free(rx->audio_name);
+
+    g_mutex_clear(&rx->mutex);
+    g_mutex_clear(&rx->local_audio_mutex);
+
+    
+    g_print("delete_receiver: cleaned up receiver channel=%d\n", ch);
+    g_free(rx);
+}
+
+static gboolean delete_receiver_idle_cb(gpointer data) {
+    DeleteReceiverData *dr = (DeleteReceiverData *)data;
+    RECEIVER *rx = dr->rx;
+
+    delete_receiver(rx);  // Your existing cleanup
+    g_free(dr);           // Free the wrapper
+
+    return FALSE;         // Run once
 }
 
 static void rxtx(RADIO *r) {
@@ -973,95 +1025,153 @@ static gboolean configure_cb(GtkWidget *widget,gpointer data) {
   return TRUE;
 }
 
+// Callbacks for sliders
+static void mic_level_value_changed_cb(GtkRange *range, gpointer data) {
+    RADIO *r = (RADIO *)data;
+    r->vox_threshold = gtk_range_get_value(range); // Update VOX threshold (0.0 to 1.0)
+    // Call setter if it exists (uncomment if defined in your codebase)
+    // transmitter_set_mic_level(r->transmitter, r->vox_threshold);
+    vox_changed(r); // Notify VOX change
+    update_tx_panadapter(r); // Refresh panadapter
+}
+
+static void mic_gain_value_changed_cb(GtkRange *range, gpointer data) {
+    RADIO *r = (RADIO *)data;
+    TRANSMITTER *tx = r->transmitter;
+    tx->mic_gain = gtk_range_get_value(range); // Update mic gain (dB)
+    // Call setter if it exists (uncomment if defined in your codebase)
+    // transmitter_set_mic_gain(tx, tx->mic_gain);
+    update_tx_panadapter(r); // Refresh panadapter
+}
+
+static void drive_value_changed_cb(GtkRange *range, gpointer data) {
+    RADIO *r = (RADIO *)data;
+    TRANSMITTER *tx = r->transmitter;
+    tx->drive = gtk_range_get_value(range); // Update drive (0-100)
+    // Call setter if it exists (uncomment if defined in your codebase)
+    // transmitter_set_drive(tx, tx->drive);
+    update_tx_panadapter(r); // Refresh panadapter
+}
+
 static void create_visual(RADIO *r) {
-  r->visual=gtk_grid_new();
-  gtk_grid_set_row_homogeneous(GTK_GRID(r->visual),TRUE);
-  gtk_grid_set_column_homogeneous(GTK_GRID(r->visual),FALSE);
-  gtk_grid_set_row_spacing(GTK_GRID(r->visual),5);
-  gtk_grid_set_column_spacing(GTK_GRID(r->visual),5);
+    r->visual = gtk_grid_new();
+    gtk_grid_set_row_homogeneous(GTK_GRID(r->visual), TRUE);
+    gtk_grid_set_column_homogeneous(GTK_GRID(r->visual), FALSE);
+    gtk_grid_set_row_spacing(GTK_GRID(r->visual), 5);
+    gtk_grid_set_column_spacing(GTK_GRID(r->visual), 5);
 
+    int row = 0;
+    int col = 0;
 
-  int row=0;
-  int col=0;
+    if (r->can_transmit) {
+        gtk_grid_attach(GTK_GRID(r->visual), r->transmitter->panadapter, col, row, 1, 5);
+        col++;
+        row = 0;
 
-  if(r->can_transmit) {
-    gtk_grid_attach(GTK_GRID(r->visual),r->transmitter->panadapter,col,row,1,5);
+        r->mox_button = gtk_toggle_button_new_with_label("MOX");
+        gtk_widget_set_name(r->mox_button, "transmit-warning");
+        g_signal_connect(r->mox_button, "toggled", G_CALLBACK(mox_cb), (gpointer)r);
+        gtk_grid_attach(GTK_GRID(r->visual), r->mox_button, col, row, 1, 1);
+        row++;
+
+        r->vox_button = gtk_toggle_button_new_with_label("VOX");
+        gtk_widget_set_name(r->vox_button, "transmit-warning");
+        g_signal_connect(r->vox_button, "toggled", G_CALLBACK(vox_cb), (gpointer)r);
+        gtk_grid_attach(GTK_GRID(r->visual), r->vox_button, col, row, 1, 1);
+        row++;
+
+        // Mic Level Slider
+        GtkWidget *mic_level_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+        GtkWidget *mic_level_label = gtk_label_new("Mic Level: ");
+        gtk_widget_set_name(mic_level_label, "slider-label");
+        gtk_box_pack_start(GTK_BOX(mic_level_box), mic_level_label, FALSE, FALSE, 5);
+
+        r->mic_level = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.0, 1.0, 0.01);
+        gtk_widget_set_name(r->mic_level, "modern-slider");
+        gtk_scale_set_draw_value(GTK_SCALE(r->mic_level), TRUE);
+        gtk_scale_set_value_pos(GTK_SCALE(r->mic_level), GTK_POS_TOP);
+        gtk_range_set_value(GTK_RANGE(r->mic_level), r->vox_threshold);
+        gtk_widget_set_size_request(r->mic_level, 200, -1);
+        g_signal_connect(r->mic_level, "value-changed", G_CALLBACK(mic_level_value_changed_cb), (gpointer)r);
+        gtk_box_pack_start(GTK_BOX(mic_level_box), r->mic_level, TRUE, TRUE, 5);
+        gtk_grid_attach(GTK_GRID(r->visual), mic_level_box, col, row, 3, 1);
+        row++;
+
+        // Mic Gain Slider
+        GtkWidget *mic_gain_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+        GtkWidget *mic_gain_label = gtk_label_new("Mic Gain (dB): ");
+        gtk_widget_set_name(mic_gain_label, "slider-label");
+        gtk_box_pack_start(GTK_BOX(mic_gain_box), mic_gain_label, FALSE, FALSE, 5);
+
+        r->mic_gain = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, -10.0, 50.0, 0.1);
+        gtk_widget_set_name(r->mic_gain, "modern-slider");
+        gtk_scale_set_draw_value(GTK_SCALE(r->mic_gain), TRUE);
+        gtk_scale_set_value_pos(GTK_SCALE(r->mic_gain), GTK_POS_TOP);
+        gtk_range_set_value(GTK_RANGE(r->mic_gain), r->transmitter->mic_gain);
+        gtk_widget_set_size_request(r->mic_gain, 200, -1);
+        g_signal_connect(r->mic_gain, "value-changed", G_CALLBACK(mic_gain_value_changed_cb), (gpointer)r);
+        gtk_box_pack_start(GTK_BOX(mic_gain_box), r->mic_gain, TRUE, TRUE, 5);
+        gtk_grid_attach(GTK_GRID(r->visual), mic_gain_box, col, row, 3, 1);
+        row++;
+
+        // Drive Level Slider
+        GtkWidget *drive_level_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+        GtkWidget *drive_level_label = gtk_label_new("Drive (%): ");
+        gtk_widget_set_name(drive_level_label, "slider-label");
+        gtk_box_pack_start(GTK_BOX(drive_level_box), drive_level_label, FALSE, FALSE, 5);
+
+        r->drive_level = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.0, 100.0, 1.0);
+        gtk_widget_set_name(r->drive_level, "modern-slider");
+        gtk_scale_set_draw_value(GTK_SCALE(r->drive_level), TRUE);
+        gtk_scale_set_value_pos(GTK_SCALE(r->drive_level), GTK_POS_TOP);
+        gtk_range_set_value(GTK_RANGE(r->drive_level), r->transmitter->drive);
+        gtk_widget_set_size_request(r->drive_level, 200, -1);
+        g_signal_connect(r->drive_level, "value-changed", G_CALLBACK(drive_value_changed_cb), (gpointer)r);
+        gtk_box_pack_start(GTK_BOX(drive_level_box), r->drive_level, TRUE, TRUE, 5);
+        gtk_grid_attach(GTK_GRID(r->visual), drive_level_box, col, row, 3, 1);
+
+        col++;
+        row = 0;
+
+        r->tune_button = gtk_toggle_button_new_with_label("Tune");
+        gtk_widget_set_name(r->tune_button, "transmit-warning");
+        g_signal_connect(r->tune_button, "toggled", G_CALLBACK(tune_cb), (gpointer)r);
+        gtk_grid_attach(GTK_GRID(r->visual), r->tune_button, col, row, 1, 1);
+        row++;
+    }
+
+    GtkWidget *configure = gtk_button_new_with_label("Configure");
+    gtk_widget_set_name(configure, "vfo-button");
+    g_signal_connect(configure, "clicked", G_CALLBACK(configure_cb), (gpointer)r);
+    gtk_grid_attach(GTK_GRID(r->visual), configure, col, row, 1, 1);
+
     col++;
-    row=0;
+    row = 0;
 
-    r->mox_button=gtk_toggle_button_new_with_label("MOX");
-    gtk_widget_set_name(r->mox_button,"transmit-warning");
-    //gtk_style_context_add_class(gtk_widget_get_style_context(GTK_WIDGET(r->mox_button)),"circular");
-    g_signal_connect(r->mox_button,"toggled",G_CALLBACK(mox_cb),(gpointer)r);
-    gtk_grid_attach(GTK_GRID(r->visual),r->mox_button,col,row,1,1);
-    row++;
-
-    r->vox_button=gtk_toggle_button_new_with_label("VOX");
-    gtk_widget_set_name(r->vox_button,"transmit-warning");
-    //gtk_style_context_add_class(gtk_widget_get_style_context(GTK_WIDGET(r->vox_button)),"circular");
-    g_signal_connect(r->vox_button,"toggled",G_CALLBACK(vox_cb),(gpointer)r);
-    gtk_grid_attach(GTK_GRID(r->visual),r->vox_button,col,row,1,1);
-    row++;
-
-    r->mic_level=create_mic_level(radio->transmitter);
-    gtk_grid_attach(GTK_GRID(r->visual),r->mic_level,col,row,3,1);
-    row++;
-  
-    r->mic_gain=create_mic_gain(radio->transmitter);
-    gtk_grid_attach(GTK_GRID(r->visual),r->mic_gain,col,row,3,1);
-    row++;
-
-    r->drive_level=create_drive_level(radio->transmitter);
-    gtk_grid_attach(GTK_GRID(r->visual),r->drive_level,col,row,3,1);
-
-    col++;
-    row=0;
-  
-    r->tune_button=gtk_toggle_button_new_with_label("Tune");
-    gtk_widget_set_name(r->tune_button,"transmit-warning");
-    //gtk_style_context_add_class(gtk_widget_get_style_context(GTK_WIDGET(r->tune_button)),"circular");
-    g_signal_connect(r->tune_button,"toggled",G_CALLBACK(tune_cb),(gpointer)r);
-    gtk_grid_attach(GTK_GRID(r->visual),r->tune_button,col,row,1,1);
-    row++;
-
-  }
-
-  GtkWidget *configure=gtk_button_new_with_label("Configure");
-  gtk_widget_set_name(configure,"vfo-button");
-  //gtk_style_context_add_class(gtk_widget_get_style_context(GTK_WIDGET(configure)),"circular");
-  g_signal_connect(configure,"clicked",G_CALLBACK(configure_cb),(gpointer)r);
-  gtk_grid_attach(GTK_GRID(r->visual),configure,col,row,1,1);
-
-  col++;
-  row=0;
-
-  if(r->discovered->supported_receivers>1) {
-    add_receiver_b=gtk_button_new_with_label("Add Receiver");
-    gtk_widget_set_name(add_receiver_b,"vfo-button");
-    //gtk_style_context_add_class(gtk_widget_get_style_context(GTK_WIDGET(add_receiver_b)),"circular");
-    g_signal_connect(add_receiver_b,"clicked",G_CALLBACK(add_receiver_cb),(gpointer)r);
-    gtk_grid_attach(GTK_GRID(r->visual),add_receiver_b,col,row,1,1);
-    gtk_widget_set_sensitive(add_receiver_b,r->receivers<r->discovered->supported_receivers);
-    row++;
-  }
+    if (r->discovered->supported_receivers > 1) {
+        add_receiver_b = gtk_button_new_with_label("Add Receiver");
+        gtk_widget_set_name(add_receiver_b, "vfo-button");
+        g_signal_connect(add_receiver_b, "clicked", G_CALLBACK(add_receiver_cb), (gpointer)r);
+        gtk_grid_attach(GTK_GRID(r->visual), add_receiver_b, col, row, 1, 1);
+        gtk_widget_set_sensitive(add_receiver_b, r->receivers < r->discovered->supported_receivers);
+        row++;
+    }
 
 #ifdef SOAPYSDR
-  if(r->discovered->protocol!=PROTOCOL_SOAPYSDR) {
+    if (r->discovered->protocol != PROTOCOL_SOAPYSDR) {
 #endif
-    add_wideband_b=gtk_button_new_with_label("Add Wideband");
-    gtk_widget_set_name(add_wideband_b,"vfo-button");
-    //gtk_style_context_add_class(gtk_widget_get_style_context(GTK_WIDGET(add_wideband_b)),"circular");
-    g_signal_connect(add_wideband_b,"clicked",G_CALLBACK(add_wideband_cb),(gpointer)r);
-    gtk_grid_attach(GTK_GRID(r->visual),add_wideband_b,col,row,1,1);
-    col++;
+        add_wideband_b = gtk_button_new_with_label("Add Wideband");
+        gtk_widget_set_name(add_wideband_b, "vfo-button");
+        g_signal_connect(add_wideband_b, "clicked", G_CALLBACK(add_wideband_cb), (gpointer)r);
+        gtk_grid_attach(GTK_GRID(r->visual), add_wideband_b, col, row, 1, 1);
+        col++;
 #ifdef SOAPYSDR
-  }
+    }
 #endif
 
-  row=0;
+    row = 0;
 
-  gtk_widget_show_all(r->visual);
-  
+    gtk_widget_show_all(r->visual);
 }
 
 RADIO *create_radio(DISCOVERED *d) {

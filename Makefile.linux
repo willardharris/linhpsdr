@@ -70,7 +70,7 @@ MIDI_OBJS= alsa_midi.o midi2.o midi3.o midi_dialog.o
 MIDI_LIBS= -lasound
 endif
 
-CFLAGS=	-g -Wno-deprecated-declarations -O3
+CFLAGS=	-g -O2 -Wall -Wno-deprecated-declarations -O3
 OPTIONS=  $(MIDI_OPTIONS) $(AUDIO_OPTIONS)  $(SOAPYSDR_OPTIONS) \
          $(CWDAEMON_OPTIONS)  $(OPENGL_OPTIONS) \
          -D GIT_DATE='"$(GIT_DATE)"' -D GIT_VERSION='"$(GIT_VERSION)"'
@@ -137,7 +137,8 @@ radio_info.c\
 rigctl.c \
 bpsk.c \
 subrx.c \
-actions.c
+actions.c \
+noise_menu.c
 
 HEADERS=\
 main.h\
@@ -190,7 +191,8 @@ radio_info.h\
 rigctl.h \
 bpsk.h \
 subrx.h \
-actions.h
+actions.h \
+noise_menu.h
 
 OBJS=\
 main.o\
@@ -242,7 +244,8 @@ radio_info.o\
 rigctl.o \
 bpsk.o \
 subrx.o \
-actions.o
+actions.o \
+noise_menu.o
 
 
 $(PROGRAM):  $(OBJS) $(SOAPYSDR_OBJS) $(CWDAEMON_OBJS) $(MIDI_OBJS)
@@ -276,4 +279,3 @@ debian:
 	cp hpsdr_small.png pkg/linhpsdr/usr/share/linhpsdr
 	cp linhpsdr.desktop pkg/linhpsdr/usr/share/applications
 	cd pkg; dpkg-deb --build linhpsdr
-

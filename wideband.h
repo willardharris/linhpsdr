@@ -20,6 +20,20 @@
 #ifndef WIDEBAND_H
 #define WIDEBAND_H
 
+// Optimization: Cache for static elements (grid, markers)
+typedef struct {
+  cairo_surface_t *static_surface;
+  gint width;
+  gint height;
+  gint pixels;
+  gdouble hz_per_pixel;
+  gint panadapter_high;
+  gint panadapter_low;
+} wPanadapterCache;
+
+
+
+
 typedef struct _wideband {
   gint channel; // WDSP channel
   gint adc;
@@ -76,6 +90,8 @@ typedef struct _wideband {
   gint last_x;
 
   GtkWidget *dialog;
+
+  wPanadapterCache wpanadapter_cache;
 
 } WIDEBAND;
 

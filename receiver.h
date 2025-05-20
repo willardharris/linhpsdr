@@ -29,6 +29,35 @@
 
 typedef enum {SPLIT_OFF, SPLIT_ON, SPLIT_SAT, SPLIT_RSAT} split_type;
 
+typedef struct _meter_cache {
+    cairo_surface_t *static_surface; // Cache for static meter elements
+    int width;
+    int height;
+} MeterCache;
+
+
+typedef struct {
+    GThread *wdsp_thread;       // Thread for WDSP processing
+    GAsyncQueue *iq_queue;      // Queue for IQ samples
+    GThread *render_thread;     // Thread for rendering
+    GAsyncQueue *render_queue;  // Queue for render tasks
+    GMutex render_mutex;        // Mutex for rendering
+    gboolean running;           // Running state for threads
+} ReceiverThreadContext;
+
+typedef struct {
+  cairo_surface_t *static_surface;
+  int width;
+  int height;
+  int zoom;
+  long long frequency_a;
+  int sample_rate;
+  int band_a;
+  int panadapter_high;
+  int panadapter_low;
+  int panadapter_step;
+} PanadapterCache;
+
 typedef struct _receiver {
   
   gint channel; // WDSP channel
@@ -273,7 +302,25 @@ typedef struct _receiver {
   gboolean rigctl_debug;
   void *rigctl;
 
+  gdouble nr2_trained_threshold;
+  gdouble nr2_trained_t2;
+  gint nb2_mode;
+  gdouble nb_tau;
+  gdouble nb_advtime;
+  gdouble nb_hang;
+  gdouble nb_thresh;
+
+  ReceiverThreadContext thread_context;
+  PanadapterCache panadapter_cache;
+  MeterCache meter_cache;
+
+
 } RECEIVER;
+
+typedef struct {
+    RECEIVER *rx;
+} DeleteReceiverData;
+
 
 
 enum {

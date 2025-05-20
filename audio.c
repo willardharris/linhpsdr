@@ -350,7 +350,7 @@ g_print("audio_open_output: ALSA: %s\n",rx->audio_name);
       unsigned int rate = 48000;
       unsigned int channels=2;
       int soft_resample=1;
-      unsigned int latency=125000;      
+      unsigned int latency=200000;      
       
       if(rx->audio_name==NULL) {
         rx->local_audio=0;
