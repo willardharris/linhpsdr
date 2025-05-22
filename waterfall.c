@@ -117,6 +117,7 @@ GtkWidget *create_waterfall(RECEIVER *rx) {
   return waterfall;
 }
 
+
 // Define maximum number of points to process (same as panadapter for consistency)
 #define MAX_PLOT_POINTS 640
 
@@ -128,35 +129,21 @@ void update_waterfall(RECEIVER *rx) {
         int height = gdk_pixbuf_get_height(rx->waterfall_pixbuf);
         int rowstride = gdk_pixbuf_get_rowstride(rx->waterfall_pixbuf);
 
-        // Rotation logic
-        if (rx->waterfall_frequency != 0 && (rx->sample_rate == rx->waterfall_sample_rate)) {
-            if (rx->waterfall_frequency != rx->frequency_a) {
-                long long half = ((long long)(rx->sample_rate / 2)) / (rx->zoom);
-                if (rx->waterfall_frequency < (rx->frequency_a - half) || rx->waterfall_frequency > (rx->frequency_a + half)) {
-                    memset(pixels, 0, width * height * 3);
-                } else {
-                    gint64 diff = rx->waterfall_frequency - rx->frequency_a;
-                    int rotate_pixels = (int)round((double)diff / rx->hz_per_pixel);
-                    if (rotate_pixels < 0) {
-                        memmove(pixels, &pixels[-rotate_pixels * 3], ((width * height) + rotate_pixels) * 3);
-                        for (int i = 0; i < height; i++) {
-                            memset(&pixels[((i * width) + (width + rotate_pixels)) * 3], 0, -rotate_pixels * 3);
-                        }
-                    } else {
-                        memmove(&pixels[rotate_pixels * 3], pixels, ((width * height) - rotate_pixels) * 3);
-                        for (int i = 0; i < height; i++) {
-                            memset(&pixels[(i * width) * 3], 0, rotate_pixels * 3);
-                        }
-                    }
-                }
-            }
-        } else {
+        // Check for changes in frequency, pan, zoom, or sample rate
+        if (rx->waterfall_frequency != rx->frequency_a ||
+            rx->waterfall_pan != rx->pan ||
+            rx->waterfall_zoom != rx->zoom ||
+            rx->waterfall_sample_rate != rx->sample_rate) {
+            // Clear the entire pixbuf
             memset(pixels, 0, width * height * 3);
+            // Update stored values
+            rx->waterfall_frequency = rx->frequency_a;
+            rx->waterfall_pan = rx->pan;
+            rx->waterfall_zoom = rx->zoom;
+            rx->waterfall_sample_rate = rx->sample_rate;
         }
 
-        rx->waterfall_frequency = rx->frequency_a;
-        rx->waterfall_sample_rate = rx->sample_rate;
-
+        // Move existing rows down
         memmove(&pixels[rowstride], pixels, (height - 1) * rowstride);
 
         // Capped resolution loop
@@ -165,25 +152,21 @@ void update_waterfall(RECEIVER *rx) {
         int average = 0;
 
         int plot_points = MIN(width, MAX_PLOT_POINTS);
-        double sample_step = (double)width / plot_points; // Match panadapter
-        double pixel_step = (double)width / (plot_points - 1); // For x-coordinate alignment
+        double sample_step = (double)width / plot_points;
+        double pixel_step = (double)width / (plot_points - 1);
 
-        // Calculate valid sample range based on zoom
-        int sample_width = rx->pixels / rx->zoom; // Number of valid samples
-        if (sample_width > width) sample_width = width; // Cap to display width
+        int sample_width = rx->pixels / rx->zoom;
+        if (sample_width > width) sample_width = width;
 
-        // Debug frequency mapping
         long long half = ((long long)rx->sample_rate / 2) / (rx->zoom);
         long long min_display = rx->frequency_a - half;
 
-        // Store colors for each plotted point
         guchar *colors = g_new(guchar, plot_points * 3);
         for (int i = 0; i < plot_points; i++) {
             double sample_idx = i * sample_step + offset;
             int idx_floor = (int)sample_idx;
             double frac = sample_idx - idx_floor;
 
-            // Clamp sample_idx to valid range
             if (idx_floor < 0) idx_floor = 0;
             if (idx_floor >= rx->pixels) idx_floor = rx->pixels - 1;
             if (idx_floor + 1 >= rx->pixels) idx_floor = rx->pixels - 1;
@@ -225,7 +208,7 @@ void update_waterfall(RECEIVER *rx) {
                     g = (int)(local_percent * 255);
                     b = 255;
                 } else if (percent < (4.0f / 9.0f)) {
-                    float local_percent = (percent - 4.0f / 9.0f) / (1.0f / 9.0f);
+                    float local_percent = (percent - 3.0f / 9.0f) / (1.0f / 9.0f); // Fixed range
                     r = 0;
                     g = 255;
                     b = (int)((1.0f - local_percent) * 255);
@@ -257,13 +240,10 @@ void update_waterfall(RECEIVER *rx) {
             colors[i * 3 + 2] = b;
         }
 
-        // Allocate line buffer
         guchar *line_buffer = g_new(guchar, width * 3);
-
-        // Fill line buffer
         for (int x = 0; x < width; x++) {
-            double t = (double)x * sample_width / width; // Scale to valid sample range
-            t = t * plot_points / sample_width; // Map to plot_points
+            double t = (double)x * sample_width / width;
+            t = t * plot_points / sample_width;
             int i = (int)t;
             double frac = t - i;
             if (i + 1 >= plot_points) {
@@ -271,7 +251,6 @@ void update_waterfall(RECEIVER *rx) {
                 frac = 0.0;
             }
 
-            // Use nearest-neighbor color
             guchar r = colors[i * 3];
             guchar g = colors[i * 3 + 1];
             guchar b = colors[i * 3 + 2];
@@ -281,7 +260,6 @@ void update_waterfall(RECEIVER *rx) {
             line_buffer[x * 3 + 2] = b;
         }
 
-        // Copy line buffer to pixbuf's top row
         memcpy(pixels, line_buffer, width * 3);
 
         g_free(colors);

@@ -29,6 +29,15 @@
 
 typedef enum {SPLIT_OFF, SPLIT_ON, SPLIT_SAT, SPLIT_RSAT} split_type;
 
+typedef struct {
+    gdouble *buffer;        // Buffer for I and Q samples (interleaved)
+    int size;               // Total number of samples (I + Q pairs)
+    int head;               // Write position (index for next write)
+    int tail;               // Read position (index for next read)
+    GMutex mutex;           // Mutex for thread safety
+    int count;              // Number of samples currently in buffer
+} RingBuffer;
+
 typedef struct _meter_cache {
     cairo_surface_t *static_surface; // Cache for static meter elements
     int width;
@@ -313,6 +322,10 @@ typedef struct _receiver {
   ReceiverThreadContext thread_context;
   PanadapterCache panadapter_cache;
   MeterCache meter_cache;
+  RingBuffer iq_ring_buffer;
+
+  int waterfall_pan; // Add this
+  int waterfall_zoom; // Add this
 
 
 } RECEIVER;
