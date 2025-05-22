@@ -555,42 +555,27 @@ void protocol2_high_priority() {
       }
 
       level=(int)(actual_volts*255.0);
-g_print("protocol2_high_priority: band=%d %s level=%d\n",radio->transmitter->rx->band_a, band->title, level);
+      g_print("protocol2_high_priority: band=%d %s level=%d\n",radio->transmitter->rx->band_a, band->title, level);
     }
 
     high_priority_buffer_to_radio[345]=level&0xFF;
 
     if(radio->transmitter->rx!=NULL) {
       if(isTransmitting(radio)) {
-        //high_priority_buffer_to_radio[1401]=band->OCtx<<1;
-        if(radio->tune) {
-/*
-          if(OCmemory_tune_time!=0) {
-            struct timeval te;
-            gettimeofday(&te,NULL);
-            long long now=te.tv_sec*1000LL+te.tv_usec/1000;
-            if(tune_timeout>now) {
-              high_priority_buffer_to_radio[1401]|=OCtune<<1;
-            }
-          } else {
-            high_priority_buffer_to_radio[1401]|=OCtune<<1;
-          }
-*/
+        band = band_get_band(radio->transmitter->rx->split ? 
+                            radio->transmitter->rx->band_b : 
+                            radio->transmitter->rx->band_a);
+
+        high_priority_buffer_to_radio[1401] = band->OCtx << 1;
+        if (radio->tune) {
+            high_priority_buffer_to_radio[1401] |= radio->oc_tune << 1;
         }
-      } else {
-        band=band_get_band(radio->transmitter->rx->band_a);
-        high_priority_buffer_to_radio[1401]=band->OCrx<<1;
-      }
-/* 
-      if(radio->discovered->device==NEW_DEVICE_ATLAS) {
-        for(r=0;r<radio->discovered->supported_receivers;r++) {
-          high_priority_buffer_to_radio[1403]|=radio->receiver[i]->preamp;
-        }
-      }
-*/
+    } else {
+        band = band_get_band(radio->transmitter->rx->band_a);
+        high_priority_buffer_to_radio[1401] = band->OCrx << 1;
     }
 
-
+  }
     long filters=0x00000000;
 
     if(isTransmitting(radio)) {
