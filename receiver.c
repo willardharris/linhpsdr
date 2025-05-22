@@ -1135,6 +1135,10 @@ void add_iq_samples(RECEIVER *rx, double i_sample, double q_sample) {
     ReceiverThreadContext *ctx = &rx->thread_context;
     RingBuffer *rb = &rx->iq_ring_buffer;
     gboolean push_queue = FALSE;
+    if (isTransmitting(radio)) {
+        // We're transmitting; don't push to queue
+        return;
+    }
 
     g_mutex_lock(&rb->mutex);
     if (rb->count >= rb->size - 2) {
