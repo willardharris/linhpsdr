@@ -245,11 +245,29 @@ static void focus_in_event_cb(GtkWindow *window, GdkEventFocus *event, gpointer 
 static gpointer wdsp_processing_thread(gpointer data) {
     RECEIVER *rx = (RECEIVER *)data;
     ReceiverThreadContext *ctx = &rx->thread_context;
+
+    fprintf(stderr, "WDSP thread started: channel=%d\n", rx->channel);
+
     while (ctx->running) {
         gpointer queue_data = g_async_queue_pop(ctx->iq_queue);
-        if (GPOINTER_TO_INT(queue_data) == -1) break;
+        if (GPOINTER_TO_INT(queue_data) == -1) {
+            fprintf(stderr, "WDSP thread exiting (channel=%d)\n", rx->channel);
+            break;
+        }
+
+        int required = rx->buffer_size * 2; // I + Q
+
+        if (rx->iq_ring_buffer.count < required) {
+
+            // Retry later
+            g_async_queue_push(ctx->iq_queue, GINT_TO_POINTER(1));
+            continue;
+        }
+
+
         full_rx_buffer(rx);
     }
+
     fprintf(stderr, "WDSP thread (channel=%d): exiting\n", rx->channel);
     return NULL;
 }
@@ -431,8 +449,19 @@ g_print("receiver_change_sample_rate: from %d to %d radio=%d\n",rx->sample_rate,
   }
 #endif
   g_mutex_lock(&rx->mutex);
-  SetChannelState(rx->channel,0,1);
-  g_free(rx->audio_output_buffer);
+  g_mutex_lock(&rx->iq_ring_buffer.mutex);
+    SetChannelState(rx->channel, 0, 1);
+    g_free(rx->audio_output_buffer);
+    g_free(rx->iq_ring_buffer.buffer);
+    
+    rx->sample_rate = sample_rate;
+    rx->output_samples = rx->buffer_size / (rx->sample_rate / 48000);
+    rx->audio_output_buffer = g_new0(gdouble, 2 * rx->output_samples);
+    rx->iq_ring_buffer.size = rx->buffer_size * 16; // 16x for I and Q
+    rx->iq_ring_buffer.buffer = g_new0(gdouble, rx->iq_ring_buffer.size);
+    rx->iq_ring_buffer.head = 0;
+    rx->iq_ring_buffer.tail = 0;
+    rx->iq_ring_buffer.count = 0;
   rx->audio_output_buffer=NULL;
   rx->sample_rate=sample_rate;
   rx->output_samples=rx->buffer_size/(rx->sample_rate/48000);
@@ -521,6 +550,12 @@ static gboolean window_delete(GtkWidget *widget, GdkEvent *event, gpointer data)
     if (ctx->render_queue && g_async_queue_length(ctx->render_queue) < 3) {
     g_async_queue_push(ctx->render_queue, GINT_TO_POINTER(1));
 }
+    // Free ring buffer
+    g_mutex_lock(&rx->iq_ring_buffer.mutex);
+    g_free(rx->iq_ring_buffer.buffer);
+    rx->iq_ring_buffer.buffer = NULL;
+    g_mutex_unlock(&rx->iq_ring_buffer.mutex);
+    g_mutex_clear(&rx->iq_ring_buffer.mutex);
 
     // Join threads with a timeout
     GTimer *timer = g_timer_new();
@@ -1076,24 +1111,41 @@ static void process_rx_buffer(RECEIVER *rx) {
 }
 static void full_rx_buffer(RECEIVER *rx) {
     int error;
+    RingBuffer *rb = &rx->iq_ring_buffer;
 
     if (isTransmitting(radio) && (!rx->duplex)) return;
 
+    g_mutex_lock(&rb->mutex);
+    int min_samples = rx->buffer_size; // 2048 samples
+    if (rb->count < min_samples) {
+        fprintf(stderr, "full_rx_buffer: underflow, channel=%d, count=%d\n", rx->channel, rb->count);
+        g_mutex_unlock(&rb->mutex);
+        return;
+    }
+
+    gdouble *temp_buffer = g_new0(gdouble, rx->buffer_size * 2);
+    for (int i = 0; i < rx->buffer_size * 2; i++) {
+        temp_buffer[i] = rb->buffer[rb->tail];
+        rb->tail = (rb->tail + 1) % rb->size;
+    }
+    rb->count -= rx->buffer_size * 2;
+
+    g_mutex_unlock(&rb->mutex);
+
     if (rx->nb) {
-        xanbEXT(rx->channel, rx->iq_input_buffer, rx->iq_input_buffer);
+        xanbEXT(rx->channel, temp_buffer, temp_buffer);
     }
     if (rx->nb2) {
-        xnobEXT(rx->channel, rx->iq_input_buffer, rx->iq_input_buffer);
+        xnobEXT(rx->channel, temp_buffer, temp_buffer);
     }
 
     g_mutex_lock(&rx->mutex);
-    fexchange0(rx->channel, rx->iq_input_buffer, rx->audio_output_buffer, &error);
+    fexchange0(rx->channel, temp_buffer, rx->audio_output_buffer, &error);
     if (error != 0) {
         fprintf(stderr, "full_rx_buffer: channel=%d samples=%d fexchange0: error=%d\n",
-                rx->channel, rx->samples, error);
+                rx->channel, rx->buffer_size, error);
         if (error == -2) {
             memset(rx->audio_output_buffer, 0, 2 * rx->output_samples * sizeof(gdouble));
-            rx->samples = 0;
         }
     }
 
@@ -1101,26 +1153,35 @@ static void full_rx_buffer(RECEIVER *rx) {
         subrx_iq_buffer(rx);
     }
 
-    Spectrum0(1, rx->channel, 0, 0, rx->iq_input_buffer);
-
+    Spectrum0(1, rx->channel, 0, 0, temp_buffer);
+    g_free(temp_buffer);
     process_rx_buffer(rx);
     g_mutex_unlock(&rx->mutex);
 }
 
+
 void add_iq_samples(RECEIVER *rx, double i_sample, double q_sample) {
     ReceiverThreadContext *ctx = &rx->thread_context;
-    g_mutex_lock(&rx->mutex);
-    rx->iq_input_buffer[rx->samples * 2] = i_sample;
-    rx->iq_input_buffer[(rx->samples * 2) + 1] = q_sample;
-    rx->samples++;
-    if (rx->samples >= rx->buffer_size) {
-        if (ctx->iq_queue && g_async_queue_length(ctx->iq_queue) < 3) {
-    g_async_queue_push(ctx->iq_queue, GINT_TO_POINTER(1));
-}
+    RingBuffer *rb = &rx->iq_ring_buffer;
+    gboolean push_queue = FALSE;
 
-        rx->samples = 0;
+    g_mutex_lock(&rb->mutex);
+    if (rb->count >= rb->size - 2) {
+        fprintf(stderr, "add_iq_samples: ring buffer full, channel=%d, count=%d\n", rx->channel, rb->count);
+    } else {
+        rb->buffer[rb->head] = i_sample;
+        rb->buffer[rb->head + 1] = q_sample;
+        rb->head = (rb->head + 2) % rb->size;
+        rb->count += 2;
+        if (rb->count >= rx->buffer_size * 2 && ctx->iq_queue && g_async_queue_length(ctx->iq_queue) < 3) {
+            push_queue = TRUE;
+        }
     }
-    g_mutex_unlock(&rx->mutex);
+    g_mutex_unlock(&rb->mutex);
+
+    if (push_queue) {
+        g_async_queue_push(ctx->iq_queue, GINT_TO_POINTER(1));
+    }
 
     if (rx->bpsk_enable && rx->bpsk != NULL) {
         bpsk_add_iq_samples(rx->bpsk, i_sample, q_sample);
@@ -1548,7 +1609,7 @@ g_print("create_receiver: channel=%d frequency_min=%ld frequency_max=%ld\n", cha
     rx->buffer_size=1024; //2048;
   } else {
 #endif
-    rx->buffer_size=2048;
+    rx->buffer_size=1024;
 #ifdef SOAPYSDR
   }
 #endif
@@ -1677,7 +1738,13 @@ fprintf(stderr,"create_receiver: fft_size=%d\n",rx->fft_size);
     }
   }
   rx->buffer_size=2048;
-  rx->iq_input_buffer=g_new0(gdouble,2*rx->buffer_size);
+   // Initialize ring buffer
+    rx->iq_ring_buffer.size = rx->buffer_size * 16; // 16x for I and Q
+    rx->iq_ring_buffer.buffer = g_new0(gdouble, rx->iq_ring_buffer.size);
+    rx->iq_ring_buffer.head = 0;
+    rx->iq_ring_buffer.tail = 0;
+    rx->iq_ring_buffer.count = 0;
+    g_mutex_init(&rx->iq_ring_buffer.mutex);
   rx->output_samples=rx->buffer_size/(rx->sample_rate/48000);
   rx->audio_output_buffer=g_new0(gdouble,2*rx->output_samples);
 
