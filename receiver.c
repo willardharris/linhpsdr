@@ -543,53 +543,24 @@ static gboolean window_delete(GtkWidget *widget, GdkEvent *event, gpointer data)
 
     // Signal threads to exit
     ctx->running = FALSE;
+
     if (ctx->iq_queue && g_async_queue_length(ctx->iq_queue) < 3) {
-    g_async_queue_push(ctx->iq_queue, GINT_TO_POINTER(1));
-}
+        g_async_queue_push(ctx->iq_queue, GINT_TO_POINTER(-1));
+    }
 
     if (ctx->render_queue && g_async_queue_length(ctx->render_queue) < 3) {
-    g_async_queue_push(ctx->render_queue, GINT_TO_POINTER(1));
-}
-    // Free ring buffer
-    g_mutex_lock(&rx->iq_ring_buffer.mutex);
-    g_free(rx->iq_ring_buffer.buffer);
-    rx->iq_ring_buffer.buffer = NULL;
-    g_mutex_unlock(&rx->iq_ring_buffer.mutex);
-    g_mutex_clear(&rx->iq_ring_buffer.mutex);
-
-    // Join threads with a timeout
-    GTimer *timer = g_timer_new();
-    if (ctx->wdsp_thread) {
-        if (!g_thread_join_timeout(ctx->wdsp_thread, 1.0)) { // 1-second timeout
-            fprintf(stderr, "WDSP thread (channel=%d) failed to join\n", rx->channel);
-        }
-        ctx->wdsp_thread = NULL;
-    }
-    if (ctx->render_thread) {
-        if (!g_thread_join_timeout(ctx->render_thread, 1.0)) {
-            fprintf(stderr, "Render thread (channel=%d) failed to join\n", rx->channel);
-        }
-        ctx->render_thread = NULL;
-    }
-    g_timer_destroy(timer);
-
-    // Free queues
-    g_async_queue_unref(ctx->iq_queue);
-    ctx->iq_queue = NULL;
-    if (ctx->render_queue) {
-        g_async_queue_unref(ctx->render_queue);
-        ctx->render_queue = NULL;
+        g_async_queue_push(ctx->render_queue, GINT_TO_POINTER(-1));
     }
 
-    // Clean up mutex
-    g_mutex_clear(&ctx->render_mutex);
-
-    // Defer widget destruction and receiver deletion
+    // Defer widget destruction and full cleanup to idle
     g_idle_add(destroy_widgets_cb, rx);
+
+    // Schedule the final cleanup in delete_receiver()
     DeleteReceiverData *dr = g_new0(DeleteReceiverData, 1);
-dr->rx = rx;
-g_idle_add(delete_receiver_idle_cb, dr);
-    return FALSE;
+    dr->rx = rx;
+    g_idle_add(delete_receiver_idle_cb, dr);
+
+    return FALSE; // Allow window to be destroyed
 }
 
 gboolean receiver_button_press_event_cb(GtkWidget *widget, GdkEventButton *event, gpointer data) {
