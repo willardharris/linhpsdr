@@ -1,8 +1,20 @@
 # LinHPSDR
 
-### Development environment
+### Whats new in Reimagined!
 
-Development and testing has been run on Ubuntu 17.10 and Ubuntu 18.04. If run on early versions there may be a problem with GTK not supporting the gtk_menu_popup_at_pointer function vfo.c. For information on MacOS support see [MacOS.md](./MacOS.md).
+Added RingBuffer for IQ samples, this greatly improves audio quality.
+Optimized Panadapter and Waterfall for better performance.
+Moved WDSP (DSP Processing) to a seperate thread to improve performance.
+Added NR2 Trained and new noise menu.
+Various other tweaks and fixes!
+
+Please note: This is very beta, and is constanly updating!  
+
+Thanks,
+
+W4WHL
+
+
 
 ### Prerequisites for building
 
