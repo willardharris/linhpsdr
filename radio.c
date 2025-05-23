@@ -26,7 +26,6 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <sys/time.h>
-
 #include <wdsp.h>
 
 #include "alex.h"
@@ -75,6 +74,15 @@ static GtkWidget *add_receiver_b;
 static GtkWidget *add_wideband_b;
 
 static void rxtx(RADIO *r);
+
+static gboolean update_mic_meter(gpointer data) {
+  RADIO *r = (RADIO *)data;
+  if (r->mic_meter && r->local_microphone) {
+    // vox_peak is already normalized to 0.0-1.0
+    gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(r->mic_meter), r->vox_peak);
+  }
+  return G_SOURCE_CONTINUE; // Keep the timer running
+}
 
 int radio_restart(void *data) {
   RADIO *r=(RADIO *)data;
@@ -1039,8 +1047,9 @@ static void mic_gain_value_changed_cb(GtkRange *range, gpointer data) {
     RADIO *r = (RADIO *)data;
     TRANSMITTER *tx = r->transmitter;
     tx->mic_gain = gtk_range_get_value(range); // Update mic gain (dB)
-    // Call setter if it exists (uncomment if defined in your codebase)
-    // transmitter_set_mic_gain(tx, tx->mic_gain);
+    if(tx->mic_gain<-10.0) tx->mic_gain=-10.0;
+    if(tx->mic_gain>50.0) tx->mic_gain=50.0;
+    SetTXAPanelGain1(tx->channel,pow(10.0, tx->mic_gain / 20.0));
     update_tx_panadapter(r); // Refresh panadapter
 }
 
@@ -1080,24 +1089,53 @@ static void create_visual(RADIO *r) {
         gtk_grid_attach(GTK_GRID(r->visual), r->vox_button, col, row, 1, 1);
         row++;
 
-        // Mic Level Slider
-        GtkWidget *mic_level_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
-        GtkWidget *mic_level_label = gtk_label_new("Mic Level: ");
-        gtk_widget_set_name(mic_level_label, "slider-label");
-        gtk_box_pack_start(GTK_BOX(mic_level_box), mic_level_label, FALSE, FALSE, 5);
+        // Mic Level Slider with Mic Meter Underlay
+GtkWidget *mic_level_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+GtkWidget *mic_level_label = gtk_label_new("Mic Level:");
+gtk_widget_set_name(mic_level_label, "slider-label");
+gtk_box_pack_start(GTK_BOX(mic_level_box), mic_level_label, FALSE, FALSE, 5);
 
-        r->mic_level = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.0, 1.0, 0.01);
-        gtk_widget_set_name(r->mic_level, "modern-slider");
-        gtk_scale_set_draw_value(GTK_SCALE(r->mic_level), TRUE);
-        gtk_scale_set_value_pos(GTK_SCALE(r->mic_level), GTK_POS_TOP);
-        gtk_range_set_value(GTK_RANGE(r->mic_level), r->vox_threshold);
-        gtk_widget_set_size_request(r->mic_level, 200, -1);
-        g_signal_connect(r->mic_level, "value-changed", G_CALLBACK(mic_level_value_changed_cb), (gpointer)r);
-        gtk_box_pack_start(GTK_BOX(mic_level_box), r->mic_level, TRUE, TRUE, 5);
-        gtk_grid_attach(GTK_GRID(r->visual), mic_level_box, col, row, 3, 1);
-        row++;
+// Create overlay container
+GtkWidget *overlay = gtk_overlay_new();
+gtk_widget_set_name(overlay, "mic-overlay");
+gtk_widget_set_size_request(overlay, 220, 24);  // Unified height
+gtk_widget_set_halign(overlay, GTK_ALIGN_FILL);
+gtk_widget_set_valign(overlay, GTK_ALIGN_CENTER);
+gtk_widget_set_margin_top(overlay, 2);
+gtk_widget_set_margin_bottom(overlay, 2);
 
-        // Mic Gain Slider
+// Mic Meter (Progress Bar)
+r->mic_meter = gtk_progress_bar_new();
+gtk_widget_set_name(r->mic_meter, "mic-meter");
+gtk_progress_bar_set_fraction(GTK_PROGRESS_BAR(r->mic_meter), 0.0);
+gtk_widget_set_size_request(r->mic_meter, 204, 10);
+gtk_widget_set_halign(r->mic_meter, GTK_ALIGN_FILL);
+gtk_widget_set_valign(r->mic_meter, GTK_ALIGN_CENTER);
+gtk_container_add(GTK_CONTAINER(overlay), r->mic_meter);
+
+// Apply fallback class for yellow styling
+GtkStyleContext *context = gtk_widget_get_style_context(r->mic_meter);
+gtk_style_context_add_class(context, "yellow-progress");
+
+// Mic Level Slider (Overlaid)
+r->mic_level = gtk_scale_new_with_range(GTK_ORIENTATION_HORIZONTAL, 0.0, 1.0, 0.01);
+gtk_widget_set_name(r->mic_level, "modern-slider");
+gtk_scale_set_draw_value(GTK_SCALE(r->mic_level), FALSE);  // Cleaner look
+gtk_widget_set_size_request(r->mic_level, 204, 10);
+gtk_widget_set_halign(r->mic_level, GTK_ALIGN_FILL);
+gtk_widget_set_valign(r->mic_level, GTK_ALIGN_CENTER);
+gtk_widget_set_opacity(r->mic_level, 0.6);
+gtk_range_set_value(GTK_RANGE(r->mic_level), r->vox_threshold);
+g_signal_connect(r->mic_level, "value-changed", G_CALLBACK(mic_level_value_changed_cb), (gpointer)r);
+
+gtk_overlay_add_overlay(GTK_OVERLAY(overlay), r->mic_level);
+
+// Attach overlay to box and grid
+gtk_box_pack_start(GTK_BOX(mic_level_box), overlay, TRUE, TRUE, 5);
+gtk_grid_attach(GTK_GRID(r->visual), mic_level_box, col, row, 3, 1);
+row++;
+
+     // Mic Gain Slider
         GtkWidget *mic_gain_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
         GtkWidget *mic_gain_label = gtk_label_new("Mic Gain (dB): ");
         gtk_widget_set_name(mic_gain_label, "slider-label");
@@ -1413,6 +1451,7 @@ g_print("create_radio for %s %d\n",d->name,d->device);
 #endif
 
   create_audio(r->which_audio_backend,r->which_audio==USE_SOUNDIO?audio_get_backend_name(r->which_audio_backend):NULL);
+  g_timeout_add(100, update_mic_meter, (gpointer)r);
 
   add_receivers(r);
 
