@@ -213,6 +213,7 @@ typedef struct _radio {
 
   gboolean midi_enabled;
   char midi_filename[128];
+  GtkWidget *mic_meter;
 
 } RADIO;
 
