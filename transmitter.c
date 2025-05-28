@@ -51,10 +51,16 @@
 #endif
 
 // Ring buffer for sending 126 tx iq samples in a packet
-#define QUEUE_ELEMENTS 10000
-#define QUEUE_SIZE (QUEUE_ELEMENTS + 1)
-long Queue[QUEUE_SIZE];
-long QueueIn, QueueOut;
+#define TX_QUEUE_ELEMENTS 16384
+#define TX_QUEUE_SIZE (TX_QUEUE_ELEMENTS + 1)
+
+static struct {
+    long buffer[TX_QUEUE_SIZE];
+    int in;
+    int out;
+    GMutex mutex;
+} tx_queue;
+
 
 double ctcss_frequencies[CTCSS_FREQUENCIES]= {
   67.0,71.9,74.4,77.0,79.7,82.5,85.4,88.5,91.5,94.8,
@@ -527,28 +533,24 @@ void transmitter_set_ps_sample_rate(TRANSMITTER *tx,int rate) {
 
 //Initialise the ring buffer
 void QueueInit(void) {
-    QueueIn = QueueOut = 0;
+    g_mutex_init(&tx_queue.mutex);
+    tx_queue.in = tx_queue.out = 0;
+
 }
 
-//Put sample on the ring buffer
-int QueuePut(long new) {
-  if(QueueIn == (( QueueOut - 1 + QUEUE_SIZE) % QUEUE_SIZE)) {
-    return -1; // Queue Full
-  }
-
-  Queue[QueueIn] = new;
-  QueueIn = (QueueIn + 1) % QUEUE_SIZE;
-  return 0; // No errors
+static inline int tx_queue_put(long value) {
+    int next = (tx_queue.in + 1) % TX_QUEUE_SIZE;
+    if (next == tx_queue.out) return -1;  // Full
+    tx_queue.buffer[tx_queue.in] = value;
+    tx_queue.in = next;
+    return 0;
 }
 
-//Get sample from the ring buffer
-int QueueGet(long *old) {
-  // Queue Empty - nothing to get
-  if(QueueIn == QueueOut) return -1; 
-
-  *old = Queue[QueueOut];
-  QueueOut = (QueueOut + 1) % QUEUE_SIZE;
-  return 0; // No errors
+static inline int tx_queue_get(long *value) {
+    if (tx_queue.in == tx_queue.out) return -1;  // Empty
+    *value = tx_queue.buffer[tx_queue.out];
+    tx_queue.out = (tx_queue.out + 1) % TX_QUEUE_SIZE;
+    return 0;
 }
 
 // Tx packet schedule synched to the rx packets
@@ -644,21 +646,12 @@ void full_tx_buffer(TRANSMITTER *tx) {
   for (int j = 0; j < tx->p1_packet_size ; j++) {  
     long isample = 0;
     long qsample = 0;           
-    g_mutex_lock((&tx->queue_mutex));
-    QueueGet(&isample);
-    QueueGet(&qsample);    
-    g_mutex_unlock((&tx->queue_mutex));
+    g_mutex_lock(&tx_queue.mutex);
+    tx_queue_get(&isample);
+    tx_queue_get(&qsample);
+    g_mutex_unlock(&tx_queue.mutex);
     protocol1_iq_samples(isample, qsample);
   }
-  //}
-  /*
-  else {
-    for (int j=0; j<126; j++) {
-      QueueGet(&isample);
-      QueueGet(&qsample);            
-      protocol1_iq_samples(isample, qsample);
-    }
-  }*/
 }
 
 
@@ -722,10 +715,12 @@ void full_tx_buffer_process(TRANSMITTER *tx) {
       long isample = ROUNDHTZ(tx->iq_output_buffer[j*2]);
       long qsample = ROUNDHTZ(tx->iq_output_buffer[(j*2)+1]);  
 
-      g_mutex_lock((&tx->queue_mutex));    
-      QueuePut(isample);
-      QueuePut(qsample);    
-      g_mutex_unlock(&tx->queue_mutex);
+      g_mutex_lock(&tx_queue.mutex);
+      tx_queue_get(&isample);
+      tx_queue_get(&qsample);
+      g_mutex_unlock(&tx_queue.mutex);
+
+
     }
     return;
   }
@@ -993,7 +988,9 @@ void transmitter_init_analyzer(TRANSMITTER *tx) {
 }
 
 TRANSMITTER *create_transmitter(int channel) {
-  QueueInit();
+  g_mutex_init(&tx_queue.mutex);
+  tx_queue.in = tx_queue.out = 0;
+
   gint rc;
 g_print("create_transmitter: channel=%d\n",channel);
   TRANSMITTER *tx=g_new0(TRANSMITTER,1);
