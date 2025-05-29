@@ -1637,6 +1637,14 @@ gboolean parse_extended_cmd(COMMAND *cmd) {
             send_resp(cmd,reply);
           } else if(command[6]==';') {
             receiver_mode_changed(rx,atoi(&command[4]));
+            if (radio->transmitter) {
+                    if (rx->split == SPLIT_OFF) {
+                        transmitter_set_mode(radio->transmitter, rx->mode_a);
+                    } else {
+                        transmitter_set_mode(radio->transmitter, rx->mode_b);
+                    }
+                }
+                update_vfo(rx);
           }
           break;
         case 'E': //ZZME
@@ -3084,6 +3092,14 @@ int parse_cmd(void *data) {
                 break;
             }
             receiver_mode_changed(rx,mode);
+            if (radio->transmitter) {
+                    if (rx->split == SPLIT_OFF) {
+                        transmitter_set_mode(radio->transmitter, rx->mode_a);
+                    } else {
+                        transmitter_set_mode(radio->transmitter, rx->mode_b);
+                    }
+                }
+                update_vfo(rx);
           }
           break;
         case 'F': //MF
