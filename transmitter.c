@@ -687,15 +687,18 @@ void full_tx_buffer_process(TRANSMITTER *tx) {
   }
 
   if(radio->penelope) {
-      float driveGain = pow(tx->drive, 2)/10000.0;
       BAND *b = band_get_current_band();
       double bandGain = b->pa_calibration;
-      float txGain = driveGain * bandGain/100.0f;
-      float micScaleOut = gain * txGain;
+      float micScaleOut = gain * (bandGain / 100.0f); // Maximum gain based on band calibration
 
-      gain = micScaleOut;
       if(radio->tune && !tx->tune_use_drive) {
-          gain=(gain*tx->tune_percent)/100.0;
+          // Apply tune_percent directly to the maximum gain
+          gain = micScaleOut * (tx->tune_percent / 100.0);
+      } else {
+          // Normal operation: use drive setting
+          float driveGain = pow(tx->drive, 2) / 10000.0;
+          float txGain = driveGain * bandGain / 100.0f;
+          gain = gain * txGain;
       }
   }
 
