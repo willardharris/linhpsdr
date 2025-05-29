@@ -248,7 +248,7 @@ GtkWidget *create_meter_visual(RECEIVER *rx) {
 }
 
 void update_meter(RECEIVER *rx) {
-    static double smax = 0.0;
+    rx->smax = 0.0;
     static double last_level = -200.0; // Initialize to a low value
     char sf[32];
     cairo_t *cr;
@@ -308,16 +308,16 @@ void update_meter(RECEIVER *rx) {
     if (level < 0) {
         level = 0;
     }
-    if (level > smax) {
-        smax = level;
+    if (level > rx->smax) {
+        rx->smax = level;
     } else {
         if (level > 54) {
-            smax -= (smax - level) / (3.0 * rx->fps);
+            rx->smax -= (rx->smax - level) / (3.0 * rx->fps);
         } else {
-            smax -= (smax - level) / (rx->fps / 2.0);
+            rx->smax -= (rx->smax - level) / (rx->fps / 2.0);
         }
     }
-    int i = (int)(smax / 6.0);
+    int i = (int)(rx->smax / 6.0);
     if (i > 9) {
         i = 9;
     }
@@ -326,7 +326,7 @@ void update_meter(RECEIVER *rx) {
     cairo_show_text(cr, sf);
 
     // Draw additional dB if needed
-    i = (int)smax;
+    i = (int)rx->smax;
     if (i > 54) {
         i = i - 54;
         cairo_set_font_size(cr, 24);

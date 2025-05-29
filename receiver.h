@@ -327,6 +327,8 @@ typedef struct _receiver {
   int waterfall_pan; // Add this
   int waterfall_zoom; // Add this
 
+  double smax;
+
 
 } RECEIVER;
 
