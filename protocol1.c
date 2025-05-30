@@ -1313,7 +1313,7 @@ void ozy_send_buffer() {
           int power=0;
           if(isTransmitting(radio) || (tx_mode==CWL) || (tx_mode==CWU)) {
             if(radio->tune && !radio->transmitter->tune_use_drive) {
-              power=(int)(radio->transmitter->drive/100.0*radio->transmitter->tune_percent);
+              power=(int)radio->transmitter->tune_percent;
             } else {
               power=(int)radio->transmitter->drive;
             }

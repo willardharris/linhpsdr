@@ -1123,7 +1123,7 @@ g_print("create_transmitter: channel=%d\n",channel);
               tx->iq_output_rate,
               1, // transmit
               0, // run
-              0.010, 0.025, 0.0, 0.010, 0);
+              0.010, 0.025, 0.0, 0.010, 1);
 
   TXASetNC(tx->channel, tx->fft_size);
   TXASetMP(tx->channel, tx->low_latency);
@@ -1167,6 +1167,7 @@ g_print("create_transmitter: channel=%d\n",channel);
 
   SetTXAPanelGain1(tx->channel,pow(10.0, tx->mic_gain / 20.0));
   SetTXAPanelRun(tx->channel, 1);
+  SetTXAPanelSelect(tx->channel, 2);                         // use Mic I sample
 
   SetTXAFMDeviation(tx->channel, tx->deviation);
   SetTXAAMCarrierLevel(tx->channel, tx->am_carrier_level);
