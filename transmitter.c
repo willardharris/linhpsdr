@@ -719,8 +719,8 @@ void full_tx_buffer_process(TRANSMITTER *tx) {
       long qsample = ROUNDHTZ(tx->iq_output_buffer[(j*2)+1]);  
 
       g_mutex_lock(&tx_queue.mutex);
-      tx_queue_get(&isample);
-      tx_queue_get(&qsample);
+      tx_queue_put(isample);
+      tx_queue_put(qsample);
       g_mutex_unlock(&tx_queue.mutex);
 
 
@@ -766,9 +766,7 @@ void full_tx_buffer_process(TRANSMITTER *tx) {
           if(radio->classE) {
             protocol1_eer_iq_samples(isample,qsample,lsample,rsample);
           } else {
-            // Unreachable code, protocol1 and not class E
-            // has returned above.
-            return;
+            protocol1_iq_samples(isample,qsample);
           }
           break;
         case PROTOCOL_2:

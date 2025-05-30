@@ -763,11 +763,17 @@ static void tx_cb(GtkWidget *widget, gpointer data) {
   RECEIVER *temp=radio->transmitter->rx;
   if(radio->transmitter->rx==rx) {
     gtk_toggle_button_set_active (GTK_TOGGLE_BUTTON (widget), radio->transmitter->rx==rx);
+    
   } else {
     radio->transmitter->rx=rx;
   }
   update_vfo(temp);
   update_vfo(rx);
+  if(rx->split) {
+      transmitter_set_mode(radio->transmitter,rx->mode_b);
+    } else {
+      transmitter_set_mode(radio->transmitter,rx->mode_a);
+    }
 }
 
 static void fps_value_changed_cb(GtkWidget *widget, gpointer data) {
