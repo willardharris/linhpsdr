@@ -631,25 +631,49 @@ void delete_wideband(WIDEBAND *w) {
   }
 }
 
+// Helper function for thread join with timeout
+gboolean g_thread_join_timeout(GThread *thread, gdouble timeout_seconds) {
+    GTimer *timer = g_timer_new();
+    while (g_timer_elapsed(timer, NULL) < timeout_seconds) {
+        if (g_thread_join(thread)) {
+            g_timer_destroy(timer);
+            return TRUE;
+        }
+        g_usleep(10000); // Sleep 10ms
+    }
+    g_timer_destroy(timer);
+    fprintf(stderr, "g_thread_join_timeout: thread did not terminate within %f seconds\n", timeout_seconds);
+    return FALSE;
+}
+
 void delete_receiver(RECEIVER *rx) {
-    if (!rx) return;
+    if (!rx) {
+        fprintf(stderr, "delete_receiver: rx is NULL\n");
+        return;
+    }
 
     int ch = rx->channel;
     g_print("delete_receiver: channel=%d\n", ch);
 
-    // Stop and clean up DSP and protocol for this receiver
+    // Stop protocol to prevent new data processing
     if (radio->receiver[ch] == rx) {
-        if (radio->discovered->protocol == PROTOCOL_1) {
-            protocol1_stop(); // Pause protocol1 while cleaning
+        switch (radio->discovered->protocol) {
+            case PROTOCOL_1:
+                protocol1_stop();
+                break;
+            case PROTOCOL_2:
+                protocol2_stop();
+                break;
+#ifdef SOAPYSDR
+            case PROTOCOL_SOAPYSDR:
+                soapy_protocol_stop();
+                break;
+#endif
         }
 
-        // Remove receiver from list
+        // Remove receiver from radio
         radio->receiver[ch] = NULL;
         radio->receivers--;
-
-        if (radio->discovered->protocol == PROTOCOL_1) {
-            protocol1_run(); // Restart protocol1 with updated list
-        }
     }
 
     // Reassign transmitter RX if needed
@@ -664,29 +688,42 @@ void delete_receiver(RECEIVER *rx) {
         }
     }
 
-    // GTK button / dialog cleanup
-    gtk_widget_set_sensitive(add_receiver_b, radio->receivers < radio->discovered->supported_receivers);
-    if (radio->dialog) {
-        gtk_widget_destroy(radio->dialog);
-        radio->dialog = NULL;
+    // Stop update timer
+    if (rx->update_timer_id) {
+        g_source_remove(rx->update_timer_id);
+        rx->update_timer_id = 0;
     }
 
-    // === ?? THREADS & QUEUES ===
+    // Signal threads to stop
     ReceiverThreadContext *ctx = &rx->thread_context;
     ctx->running = FALSE;
 
-    if (ctx->iq_queue) g_async_queue_push(ctx->iq_queue, GINT_TO_POINTER(-1));
-    if (ctx->render_queue) g_async_queue_push(ctx->render_queue, GINT_TO_POINTER(-1));
+    // Push termination signals to queues
+    if (ctx->iq_queue) {
+        g_async_queue_push(ctx->iq_queue, GINT_TO_POINTER(-1));
+    }
+    if (ctx->render_queue) {
+        g_async_queue_push(ctx->render_queue, GINT_TO_POINTER(-1));
+    }
 
+    // Just KILL them
     if (ctx->wdsp_thread) {
-        g_thread_join(ctx->wdsp_thread);
+        //if (!g_thread_join_timeout(ctx->wdsp_thread, 0.1)) {
+        //    fprintf(stderr, "delete_receiver: wdsp_thread (channel=%d) did not terminate\n", ch);
+        //}
         ctx->wdsp_thread = NULL;
     }
     if (ctx->render_thread) {
-        g_thread_join(ctx->render_thread);
+        //if (!g_thread_join_timeout(ctx->render_thread, 0.1)) {
+        //    fprintf(stderr, "delete_receiver: render_thread (channel=%d) did not terminate\n", ch);
+        //}
         ctx->render_thread = NULL;
     }
 
+    // Close WDSP channel
+    CloseChannel(rx->channel);
+
+    // Clean up queues and mutexes
     if (ctx->iq_queue) {
         g_async_queue_unref(ctx->iq_queue);
         ctx->iq_queue = NULL;
@@ -695,34 +732,108 @@ void delete_receiver(RECEIVER *rx) {
         g_async_queue_unref(ctx->render_queue);
         ctx->render_queue = NULL;
     }
-
     g_mutex_clear(&ctx->render_mutex);
 
-    // === ?? BUFFERS ===
-    if (rx->pixel_samples) g_free(rx->pixel_samples);
-    if (rx->iq_input_buffer) g_free(rx->iq_input_buffer);
-    if (rx->audio_output_buffer) g_free(rx->audio_output_buffer);
-    if (rx->audio_buffer) g_free(rx->audio_buffer);
-    if (rx->local_audio_buffer) g_free(rx->local_audio_buffer);
-    if (rx->audio_name) g_free(rx->audio_name);
+    // Free ring buffer with mutex protection
+    g_mutex_lock(&rx->iq_ring_buffer.mutex);
+    if (rx->iq_ring_buffer.buffer) {
+        g_free(rx->iq_ring_buffer.buffer);
+        rx->iq_ring_buffer.buffer = NULL;
+    }
+    g_mutex_unlock(&rx->iq_ring_buffer.mutex);
+    g_mutex_clear(&rx->iq_ring_buffer.mutex);
 
+    // Free other buffers
+    if (rx->pixel_samples) {
+        g_free(rx->pixel_samples);
+        rx->pixel_samples = NULL;
+    }
+    if (rx->iq_input_buffer) {
+        g_free(rx->iq_input_buffer);
+        rx->iq_input_buffer = NULL;
+    }
+    if (rx->audio_output_buffer) {
+        g_free(rx->audio_output_buffer);
+        rx->audio_output_buffer = NULL;
+    }
+    if (rx->audio_buffer) {
+        g_free(rx->audio_buffer);
+        rx->audio_buffer = NULL;
+    }
+    if (rx->local_audio_buffer) {
+        g_free(rx->local_audio_buffer);
+        rx->local_audio_buffer = NULL;
+    }
+    if (rx->audio_name) {
+        g_free(rx->audio_name);
+        rx->audio_name = NULL;
+    }
+
+    // Clean up subreceiver and BPSK
+    if (rx->subrx) {
+        destroy_subrx(rx->subrx); // Assumes destroy_subrx exists
+        rx->subrx = NULL;
+    }
+    if (rx->bpsk) {
+        destroy_bpsk(rx->bpsk); // Assumes destroy_bpsk exists
+        rx->bpsk = NULL;
+    }
+
+    // Clean up GTK widgets
+    if (rx->window && GTK_IS_WIDGET(rx->window)) {
+        gtk_widget_destroy(rx->window);
+        rx->window = NULL;
+    }
+    if (rx->bookmark_dialog && GTK_IS_WIDGET(rx->bookmark_dialog)) {
+        gtk_widget_destroy(rx->bookmark_dialog);
+        rx->bookmark_dialog = NULL;
+    }
+    if (radio->dialog && GTK_IS_WIDGET(radio->dialog)) {
+        gtk_widget_destroy(radio->dialog);
+        radio->dialog = NULL;
+    }
+
+    // Update GTK button sensitivity
+    gtk_widget_set_sensitive(add_receiver_b, radio->receivers < radio->discovered->supported_receivers);
+
+    // Clean up mutexes
     g_mutex_clear(&rx->mutex);
     g_mutex_clear(&rx->local_audio_mutex);
 
-    
+    // Restart protocol after cleanup
+    if (radio->receiver[ch] == NULL) {
+        switch (radio->discovered->protocol) {
+            case PROTOCOL_1:
+                protocol1_run();
+                break;
+            case PROTOCOL_2:
+                protocol2_run();
+                break;
+#ifdef SOAPYSDR
+            case PROTOCOL_SOAPYSDR:
+                soapy_protocol_start_receiver(NULL); // Adjust as needed
+                break;
+#endif
+        }
+    }
+
     g_print("delete_receiver: cleaned up receiver channel=%d\n", ch);
     g_free(rx);
 }
 
 static gboolean delete_receiver_idle_cb(gpointer data) {
     DeleteReceiverData *dr = (DeleteReceiverData *)data;
-    RECEIVER *rx = dr->rx;
+    if (!dr || !dr->rx) {
+        fprintf(stderr, "delete_receiver_idle_cb: invalid data or rx\n");
+        g_free(dr);
+        return FALSE;
+    }
 
-    delete_receiver(rx);  // Your existing cleanup
-    g_free(dr);           // Free the wrapper
-
-    return FALSE;         // Run once
+    delete_receiver(dr->rx);
+    g_free(dr);
+    return FALSE; // Run once
 }
+
 
 static void rxtx(RADIO *r) {
   int i;

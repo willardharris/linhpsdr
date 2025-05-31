@@ -198,8 +198,8 @@ static unsigned char usb_buffer_block = 0;
 #endif
 
 void protocol1_stop() {
-  metis_start_stop(0);
-  running=FALSE;
+    fprintf(stderr, "protocol1_stop\n");
+    metis_start_stop(0);
 }
 
 void protocol1_run() {

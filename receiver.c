@@ -441,19 +441,44 @@ void receiver_restore_state(RECEIVER *rx) {
 void receiver_xvtr_changed(RECEIVER *rx) {
 }
 
-void receiver_change_sample_rate(RECEIVER *rx,int sample_rate) {
-g_print("receiver_change_sample_rate: from %d to %d radio=%d\n",rx->sample_rate,sample_rate,radio->sample_rate);
+void receiver_change_sample_rate(RECEIVER *rx, int sample_rate) {
+    if (!rx) {
+        fprintf(stderr, "receiver_change_sample_rate: rx is NULL\n");
+        return;
+    }
+
+    g_print("receiver_change_sample_rate: from %d to %d radio=%d\n", rx->sample_rate, sample_rate, radio->sample_rate);
+
+    // Stop protocol to prevent new IQ samples
+    switch (radio->discovered->protocol) {
+        case PROTOCOL_1:
+            break;
+        case PROTOCOL_2:
+            break;
 #ifdef SOAPYSDR
-  if(radio->discovered->protocol==PROTOCOL_SOAPYSDR) {
-    soapy_protocol_stop();
-  }
+        case PROTOCOL_SOAPYSDR:
+            soapy_protocol_stop();
+            break;
 #endif
-  g_mutex_lock(&rx->mutex);
-  g_mutex_lock(&rx->iq_ring_buffer.mutex);
+    }
+
+    g_mutex_lock(&rx->mutex);
+    g_mutex_lock(&rx->iq_ring_buffer.mutex);
+
+    // Stop WDSP channel
     SetChannelState(rx->channel, 0, 1);
-    g_free(rx->audio_output_buffer);
-    g_free(rx->iq_ring_buffer.buffer);
-    
+
+    // Free existing buffers
+    if (rx->audio_output_buffer) {
+        g_free(rx->audio_output_buffer);
+        rx->audio_output_buffer = NULL;
+    }
+    if (rx->iq_ring_buffer.buffer) {
+        g_free(rx->iq_ring_buffer.buffer);
+        rx->iq_ring_buffer.buffer = NULL;
+    }
+
+    // Update sample rate and buffer sizes
     rx->sample_rate = sample_rate;
     rx->output_samples = rx->buffer_size / (rx->sample_rate / 48000);
     rx->audio_output_buffer = g_new0(gdouble, 2 * rx->output_samples);
@@ -462,28 +487,34 @@ g_print("receiver_change_sample_rate: from %d to %d radio=%d\n",rx->sample_rate,
     rx->iq_ring_buffer.head = 0;
     rx->iq_ring_buffer.tail = 0;
     rx->iq_ring_buffer.count = 0;
-  rx->audio_output_buffer=NULL;
-  rx->sample_rate=sample_rate;
-  rx->output_samples=rx->buffer_size/(rx->sample_rate/48000);
-  rx->audio_output_buffer=g_new0(gdouble,2*rx->output_samples);
-  rx->hz_per_pixel=(double)rx->sample_rate/(double)rx->samples;
-  SetAllRates(rx->channel,rx->sample_rate,48000,48000);
+    rx->hz_per_pixel = (double)rx->sample_rate / (double)rx->samples;
 
-  receiver_init_analyzer(rx);
-  SetEXTANBSamplerate (rx->channel, sample_rate);
-  SetEXTNOBSamplerate (rx->channel, sample_rate);
-fprintf(stderr,"receiver_change_sample_rate: channel=%d rate=%d buffer_size=%d output_samples=%d\n",rx->channel, rx->sample_rate, rx->buffer_size, rx->output_samples);
+    // Reinitialize WDSP and analyzer
+    SetAllRates(rx->channel, rx->sample_rate, 48000, 48000);
+    receiver_init_analyzer(rx);
+    SetEXTANBSamplerate(rx->channel, sample_rate);
+    SetEXTNOBSamplerate(rx->channel, sample_rate);
 
+    // Restart WDSP channel
+    SetChannelState(rx->channel, 1, 0);
+    g_mutex_unlock(&rx->iq_ring_buffer.mutex);
+    g_mutex_unlock(&rx->mutex);
+
+    // Restart protocol
+    switch (radio->discovered->protocol) {
+        case PROTOCOL_1:
+            break;
+        case PROTOCOL_2:
+            break;
 #ifdef SOAPYSDR
-  if(radio->discovered->protocol==PROTOCOL_SOAPYSDR) {
-    soapy_protocol_change_sample_rate(rx,sample_rate);
-    soapy_protocol_start_receiver(rx);
-  }
+        case PROTOCOL_SOAPYSDR:
+            soapy_protocol_change_sample_rate(rx, sample_rate);
+            soapy_protocol_start_receiver(rx);
+            break;
 #endif
+    }
 
-  SetChannelState(rx->channel,1,0);
-  g_mutex_unlock(&rx->mutex);
-  receiver_update_title(rx);
+    receiver_update_title(rx);
 }
 
 void update_noise(RECEIVER *rx) {
@@ -510,18 +541,6 @@ static gboolean destroy_widgets_cb(gpointer data) {
 }
 
 // Helper function for thread join with timeout
-gboolean g_thread_join_timeout(GThread *thread, gdouble timeout_seconds) {
-    GTimer *timer = g_timer_new();
-    while (g_timer_elapsed(timer, NULL) < timeout_seconds) {
-        if (g_thread_join(thread)) {
-            g_timer_destroy(timer);
-            return TRUE;
-        }
-        g_usleep(10000); // Sleep 10ms
-    }
-    g_timer_destroy(timer);
-    return FALSE;
-}
 
 static gboolean delete_receiver_idle_cb(gpointer data) {
     DeleteReceiverData *dr = (DeleteReceiverData *)data;
