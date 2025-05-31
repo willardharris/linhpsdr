@@ -6,9 +6,11 @@ Added RingBuffer for IQ samples, this greatly improves audio quality.
 Optimized Panadapter and Waterfall for better performance.
 Moved WDSP (DSP Processing) to a seperate thread to improve performance.
 Added NR2 Trained and new noise menu.
+Fixed TX OC
+Added Fequency Calibration
 Various other tweaks and fixes!
 
-Please note: This is very beta, and is constanly updating!  
+Please note: This is very beta, and is constantly updating!  
 
 Thanks,
 
