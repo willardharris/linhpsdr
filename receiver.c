@@ -556,6 +556,10 @@ static gboolean window_delete(GtkWidget *widget, GdkEvent *event, gpointer data)
     RECEIVER *rx = (RECEIVER *)data;
     ReceiverThreadContext *ctx = &rx->thread_context;
 
+    // Save receiver state before cleanup
+    fprintf(stderr, "saving state for receiver");
+    receiver_save_state(rx);
+
     // Stop the update timer
     g_source_remove(rx->update_timer_id);
     rx->update_timer_id = 0;

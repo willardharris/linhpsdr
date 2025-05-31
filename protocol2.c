@@ -455,6 +455,8 @@ void protocol2_high_priority() {
             break;
         }
 */
+          // Apply frequency calibration offset
+          rxFrequency+=radio->frequency_calibration_offset;
           phase=(long)((4294967296.0*(double)rxFrequency)/122880000.0);
           high_priority_buffer_to_radio[9+(radio->receiver[r]->channel*4)]=phase>>24;
           high_priority_buffer_to_radio[10+(radio->receiver[r]->channel*4)]=phase>>16;
@@ -480,6 +482,8 @@ void protocol2_high_priority() {
           if(radio->transmitter->xit_enabled) {
             txFrequency+=radio->transmitter->xit;
           }
+          // Apply frequency calibration offset
+          txFrequency+=radio->frequency_calibration_offset;
         }
         switch(radio->transmitter->rx->mode_a) {
           case CWU:

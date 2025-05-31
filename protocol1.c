@@ -1200,6 +1200,7 @@ void ozy_send_buffer() {
           if(radio->transmitter->xit_enabled) {
             f+=radio->transmitter->xit;
           }
+          f+=radio->frequency_calibration_offset;
         }
         output_buffer[C1]=f>>24;
         output_buffer[C2]=f>>16;
@@ -1230,6 +1231,7 @@ void ozy_send_buffer() {
               } else {
                 txFrequency=vfo[VFO_B].frequency-vfo[VFO_B].lo+vfo[VFO_B].offset;
               }
+        
             }
             output_buffer[C1]=txFrequency>>24;
             output_buffer[C2]=txFrequency>>16;
@@ -1259,6 +1261,8 @@ void ozy_send_buffer() {
               } else if(rx->mode_a==CWL) {
                 rx_frequency+=(long long)radio->cw_keyer_sidetone_frequency;
               }
+              // Apply frequency calibration offset
+              rx_frequency+=radio->frequency_calibration_offset;
             }
 
             output_buffer[C1]=rx_frequency>>24;

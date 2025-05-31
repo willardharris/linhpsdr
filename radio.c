@@ -282,6 +282,11 @@ g_print("radio_save_state: %s\n",filename);
   sprintf(value,"%d",radio->penelope);
   setProperty("radio.penelope",value);
 
+  sprintf(value,"%d",radio->frequency_calibration_offset);
+  setProperty("radio.frequency_calibration_offset",value);
+
+  
+
   filterSaveState();
   bandSaveState();
 
@@ -477,6 +482,9 @@ void radio_restore_state(RADIO *radio) {
   value=getProperty("radio.penelope");
   if(value) radio->penelope=atoi(value);
 
+  value=getProperty("radio.frequency_calibration_offset");
+  if(value) radio->frequency_calibration_offset=atoi(value);
+
   filterRestoreState();
   bandRestoreState();
 }
@@ -653,6 +661,7 @@ void delete_receiver(RECEIVER *rx) {
     }
 
     int ch = rx->channel;
+    
     g_print("delete_receiver: channel=%d\n", ch);
 
     // Stop protocol to prevent new data processing
@@ -799,7 +808,7 @@ void delete_receiver(RECEIVER *rx) {
     // Clean up mutexes
     g_mutex_clear(&rx->mutex);
     g_mutex_clear(&rx->local_audio_mutex);
-
+    
     // Restart protocol after cleanup
     if (radio->receiver[ch] == NULL) {
         switch (radio->discovered->protocol) {
@@ -1547,6 +1556,8 @@ g_print("create_radio for %s %d\n",d->name,d->device);
   r->swr_alarm_value = 2.0;
   r->temperature_alarm_value = 42;  
   r->midi_enabled = FALSE;
+ 
+  r->frequency_calibration_offset = 0;
   
   r->dialog=NULL;
 

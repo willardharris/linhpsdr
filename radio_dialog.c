@@ -66,6 +66,7 @@ static GtkWidget *enable_attenuation_b;
 static GtkWidget *disable_fpgaclk_b;
 static GtkWidget *swr_alarm_b;
 static GtkWidget *temperature_alarm_b;
+static GtkWidget *frequency_calibration_b;
 
 static GtkWidget *adc1_frame;
 static GtkWidget *adc1_antenna_combo_box;
@@ -540,6 +541,11 @@ static void enable_step_attenuation_cb(GtkWidget *widget,gpointer data) {
   if(radio->discovered->protocol==PROTOCOL_2) {
     protocol2_high_priority();
   }
+}
+
+static void frequency_calibration_value_changed_cb(GtkWidget *widget, gpointer data) {
+  RADIO *radio = (RADIO *)data;
+  radio->frequency_calibration_offset = gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(widget));
 }
 
 static void penelope_changed_cb(GtkWidget *widget, gpointer data) {
@@ -1085,8 +1091,12 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
     gtk_grid_attach(GTK_GRID(config_grid),temperature_alarm_b,3,0,1,1);
     g_signal_connect(temperature_alarm_b,"value_changed",G_CALLBACK(temperature_alarm_changed_cb),radio);
   }
+ 
+
 #endif
 
+  
+  
   GtkWidget *audio_frame=gtk_frame_new("Audio");
   GtkWidget *audio_grid=gtk_grid_new();
   gtk_grid_set_row_homogeneous(GTK_GRID(audio_grid),TRUE);
@@ -1119,7 +1129,7 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   gtk_grid_set_row_homogeneous(GTK_GRID(calibration_grid),TRUE);
   gtk_grid_set_column_homogeneous(GTK_GRID(calibration_grid),FALSE);
   gtk_container_add(GTK_CONTAINER(calibration_frame),calibration_grid);
-  gtk_grid_attach(GTK_GRID(grid),calibration_frame,col,row++,1,1);
+  gtk_grid_attach(GTK_GRID(grid),calibration_frame,col,row++,1,1); 
 
   GtkWidget *smeter_label=gtk_label_new(" S-Meter:");
   gtk_grid_attach(GTK_GRID(calibration_grid),smeter_label,0,1,1,1);
@@ -1139,6 +1149,17 @@ GtkWidget *create_radio_dialog(RADIO *radio) {
   gtk_widget_show(panadapter_scale);
   g_signal_connect(G_OBJECT(panadapter_scale),"value_changed",G_CALLBACK(panadapter_calibrate_changed_cb),radio);
   gtk_grid_attach(GTK_GRID(calibration_grid),panadapter_scale,1,2,1,1);
+
+ // Frequency calibration
+  GtkWidget *frequency_calibration_label = gtk_label_new("Freq Calibration (Hz):");
+  gtk_widget_show(frequency_calibration_label);
+  gtk_grid_attach(GTK_GRID(calibration_grid), frequency_calibration_label, 4, 0, 1, 1);
+
+  frequency_calibration_b = gtk_spin_button_new_with_range(-10000.0, 10000.0, 1.0);
+  gtk_spin_button_set_value(GTK_SPIN_BUTTON(frequency_calibration_b), (double)radio->frequency_calibration_offset);
+  gtk_widget_show(frequency_calibration_b);
+  gtk_grid_attach(GTK_GRID(calibration_grid), frequency_calibration_b, 5, 0, 1, 1);
+  g_signal_connect(frequency_calibration_b, "value_changed", G_CALLBACK(frequency_calibration_value_changed_cb), radio);
 
   GtkWidget *cw_frame=gtk_frame_new("CW");
   GtkWidget *cw_grid=gtk_grid_new();
