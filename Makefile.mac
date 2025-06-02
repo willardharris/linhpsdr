@@ -120,7 +120,8 @@ error_handler.c\
 radio_info.c\
 bpsk.c \
 css.c \
-subrx.c
+subrx.c \
+noise_menu.c
 
 HEADERS=\
 main.h\
@@ -172,7 +173,8 @@ error_handler.h\
 radio_info.h\
 bpsk.h \
 css.h \
-subrx.h
+subrx.h \
+noise_menu.h
 
 OBJS=\
 main.o\
@@ -223,7 +225,8 @@ error_handler.o\
 radio_info.o\
 bpsk.o \
 css.o \
-subrx.o
+subrx.o \
+noise_menu.o
 
 all: prebuild  $(PROGRAM) $(HEADERS) $(SOURCES) $(MIDI_SOURCES) $(SOAPYSDR_SOURCES)
 
