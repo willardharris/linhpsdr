@@ -10,7 +10,11 @@ Fixed TX OC
 Added Fequency Calibration
 Various other tweaks and fixes!
 
-Please note: This is very beta, and is constantly updating!  
+6/2/2025 -  Added TX compressor.  Set to disable all DSP functions in DIGI Mode
+
+Please note: This is very beta, and is constantly updating!  Use SOUNDIO for audio, its non blocking and better for slower machines!
+
+Mods make this run pretty good on a RPI 4!  But a x86 pc running debian would give best results!
 
 Thanks,
 
