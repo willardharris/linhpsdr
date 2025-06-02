@@ -1016,9 +1016,25 @@ void receiver_filter_changed(RECEIVER *rx,int filter) {
   update_vfo(rx);
 }
 
-void receiver_mode_changed(RECEIVER *rx,int mode) {
-  set_mode(rx,mode);
-  receiver_filter_changed(rx,rx->filter_a);
+void receiver_mode_changed(RECEIVER *rx, int mode) {
+  set_mode(rx, mode);
+  receiver_filter_changed(rx, rx->filter_a);
+
+  // Disable NB, NR, AGC, SNB, ANF, NR2, NB2, EQ for DIGU and DIGL modes, otherwise use current values
+  if (mode == DIGU || mode == DIGL) {
+    SetEXTANBRun(rx->channel, 0);  // Disable NB
+    SetRXAANRRun(rx->channel, 0);  // Disable NR
+    SetRXAAGCMode(rx->channel, AGC_OFF);  // Disable AGC
+    SetRXASNBARun(rx->channel, 0);  // Disable SNB
+    SetRXAANFRun(rx->channel, 0);  // Disable ANF
+    SetRXAEMNRRun(rx->channel, 0);  // Disable NR2
+    SetEXTNOBRun(rx->channel, 0);  // Disable NB2
+    SetRXAEQRun(rx->channel, 0);  // Disable EQ
+  } else {
+    SetRXAAGCMode(rx->channel, rx->agc);  // Use current AGC setting
+    SetRXAEQRun(rx->channel, rx->enable_equalizer);  // Use current EQ setting
+    update_noise(rx);  // Apply NB, NR, SNB, ANF, NR2, NB2 settings
+  }
 }
 
 void receiver_band_changed(RECEIVER *rx,int band) {
@@ -1044,7 +1060,7 @@ void receiver_band_changed(RECEIVER *rx,int band) {
   rx->band_a=band;
   receiver_mode_changed(rx,rx->mode_a);
   receiver_filter_changed(rx,rx->filter_a);
-#endif
+  #endif
   frequency_changed(rx);
 }
 
@@ -1764,7 +1780,7 @@ g_print("create_receiver: OpenChannel: channel=%d buffer_size=%d sample_rate=%d 
   RXASetMP(rx->channel, rx->low_latency);
 
   frequency_changed(rx);
-  receiver_mode_changed(rx,rx->mode_a);
+  
 
   SetRXAPanelGain1(rx->channel, rx->volume);
   SetRXAPanelSelect(rx->channel, 3);
@@ -1795,6 +1811,8 @@ g_print("create_receiver: OpenChannel: channel=%d buffer_size=%d sample_rate=%d 
   SetRXAANRRun(rx->channel, rx->nr);
   SetRXAANFRun(rx->channel, rx->anf);
   SetRXASNBARun(rx->channel, rx->snb);
+
+  receiver_mode_changed(rx,rx->mode_a);
 
   int result;
   XCreateAnalyzer(rx->channel, &result, 262144, 1, 1, "");

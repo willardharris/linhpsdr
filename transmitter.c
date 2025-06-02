@@ -904,10 +904,19 @@ void transmitter_set_filter(TRANSMITTER *tx,int low,int high) {
   }
 }
 
-void transmitter_set_mode(TRANSMITTER* tx,int mode) {
-  if(tx!=NULL) {
+void transmitter_set_mode(TRANSMITTER *tx, int mode) {
+  if (tx != NULL) {
     SetTXAMode(tx->channel, mode);
-    transmitter_set_filter(tx,tx->filter_low,tx->filter_high);
+    transmitter_set_filter(tx, tx->filter_low, tx->filter_high);
+
+    // Disable compressor and EQ for DIGU and DIGL modes, otherwise use current values
+    if (mode == DIGU || mode == DIGL) {
+      SetTXACompressorRun(tx->channel, 0);  // Disable compressor
+      SetTXAEQRun(tx->channel, 0);  // Disable EQ
+    } else {
+      SetTXACompressorRun(tx->channel, tx->compressor);  // Use current compressor setting
+      SetTXAEQRun(tx->channel, tx->enable_equalizer);  // Use current EQ setting
+    }
   }
 }
 
