@@ -32,47 +32,60 @@
 #include "ext.h"
 
 static int vox_timeout_cb(gpointer data) {
-  RADIO *r=(RADIO *)data;
-  if(r->vox_enabled) {
-    r->vox=0;
-    g_idle_add(ext_vox_changed,NULL);
+  RADIO *r = (RADIO *)data;
+  r->vox_timeout = 0;
+  if (r->vox_enabled) {
+    r->vox = 0;
+    g_idle_add(ext_vox_changed, NULL);
   }
   return FALSE;
 }
 
 void update_vox(RADIO *r) {
   // calculate peak microphone input
-  // assumes it is interleaved left and right channel with length samples
   int i;
   double sample;
-  r->vox_peak=0.0;
-  for(i=0;i<r->transmitter->buffer_size;i++) {
-    sample=(double)r->transmitter->mic_input_buffer[i];
-    if(sample<0.0) {
-      sample=-sample;
+  r->vox_peak = 0.0;
+
+  for (i = 0; i < r->transmitter->buffer_size; i++) {
+    sample = (double)r->transmitter->mic_input_buffer[i];
+    if (sample < 0.0) {
+      sample = -sample;
     }
-    if(sample>r->vox_peak) {
-      r->vox_peak=sample;
+    if (sample > r->vox_peak) {
+      r->vox_peak = sample;
     }
   }
 
-  if(r->vox_enabled) {
-    if(r->vox_peak>r->vox_threshold) {
-      if(r->vox) {
-        g_source_remove(r->vox_timeout);
-      } else {
-        r->vox=1;
-        g_idle_add(ext_vox_changed,NULL);
+  // Handle VOX disable case — force TX off
+  if (!r->vox_enabled && r->vox) {
+    vox_cancel(r); // force off
+    return;
+  }
+
+  // Normal VOX operation
+  if (r->vox_enabled) {
+    if (r->vox_peak > r->vox_threshold) {
+      if (!r->vox) {
+        r->vox = 1;
+        g_idle_add(ext_vox_changed, NULL);
       }
-      r->vox_timeout=g_timeout_add((int)r->vox_hang,vox_timeout_cb,r);
+
+      // Always reset hang timer
+      g_source_remove(r->vox_timeout);
+      r->vox_timeout = g_timeout_add((int)r->vox_hang, vox_timeout_cb, r);
     }
   }
 }
 
 void vox_cancel(RADIO *r) {
-  if(r->vox) {
+  if (r->vox_timeout > 0) {
     g_source_remove(r->vox_timeout);
-    r->vox=0;
-    g_idle_add(ext_vox_changed,NULL);
+    r->vox_timeout = 0;
+  }
+
+  if (r->vox) {
+    r->vox = 0;
+    g_idle_add(ext_vox_changed, NULL);
   }
 }
