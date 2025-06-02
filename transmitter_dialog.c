@@ -48,6 +48,18 @@ static GtkWidget *microphone_frame;
 static GtkWidget *tx_spin_low;
 static GtkWidget *tx_spin_high;
 
+static void compressor_enable_cb(GtkWidget *widget, gpointer data) {
+  TRANSMITTER *tx = (TRANSMITTER *)data;
+  tx->compressor = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(widget));
+  SetTXACompressorRun(tx->channel, tx->compressor);
+}
+
+static void compressor_level_value_changed_cb(GtkWidget *widget, gpointer data) {
+  TRANSMITTER *tx = (TRANSMITTER *)data;
+  tx->compressor_level = gtk_spin_button_get_value(GTK_SPIN_BUTTON(widget));
+  SetTXACompressorGain(tx->channel, tx->compressor_level);
+}
+
 
 /*
 static gboolean close_cb (GtkWidget *widget, GdkEventButton *event, gpointer data) {
@@ -557,6 +569,25 @@ g_print("%s: tx=%d\n",__FUNCTION__,tx->channel);
   gtk_scale_add_mark(GTK_SCALE(high_scale),9.0,GTK_POS_LEFT,NULL);
   gtk_scale_add_mark(GTK_SCALE(high_scale),12.0,GTK_POS_LEFT,NULL);
   gtk_scale_add_mark(GTK_SCALE(high_scale),15.0,GTK_POS_LEFT,"15dB");
+
+  // Add Compressor Controls
+GtkWidget *compressor_enable = gtk_check_button_new_with_label("Enable Compressor");
+gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(compressor_enable), tx->compressor);
+g_signal_connect(compressor_enable, "toggled", G_CALLBACK(compressor_enable_cb), tx);
+gtk_grid_attach(GTK_GRID(equalizer_grid), compressor_enable, 0, 12, 4, 1);
+
+GtkWidget *compressor_label = gtk_label_new("Comp Gain (dB):");
+#ifdef GTK316
+gtk_label_set_xalign(GTK_LABEL(compressor_label), 0);
+#endif
+gtk_widget_show(compressor_label);
+gtk_grid_attach(GTK_GRID(equalizer_grid), compressor_label, 0, 13, 1, 1);
+
+GtkWidget *compressor_level = gtk_spin_button_new_with_range(0.0, 20.0, 0.1);
+gtk_spin_button_set_value(GTK_SPIN_BUTTON(compressor_level), (double)tx->compressor_level);
+gtk_widget_show(compressor_level);
+gtk_grid_attach(GTK_GRID(equalizer_grid), compressor_level, 1, 13, 3, 1);
+g_signal_connect(compressor_level, "value-changed", G_CALLBACK(compressor_level_value_changed_cb), tx);
 
   update_transmitter_dialog(tx);
 
