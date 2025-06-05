@@ -26,6 +26,9 @@
 #include <string.h>
 #include <termios.h>
 #include <wdsp.h>
+#include <sched.h>
+
+
 
 #include "agc.h"
 #include "mode.h"
@@ -245,6 +248,9 @@ static void focus_in_event_cb(GtkWindow *window, GdkEventFocus *event, gpointer 
 static gpointer wdsp_processing_thread(gpointer data) {
     RECEIVER *rx = (RECEIVER *)data;
     ReceiverThreadContext *ctx = &rx->thread_context;
+    struct sched_param param;
+    param.sched_priority = sched_get_priority_max(SCHED_FIFO);
+    pthread_setschedparam(pthread_self(), SCHED_FIFO, &param);
 
     fprintf(stderr, "WDSP thread started: channel=%d\n", rx->channel);
 
@@ -482,7 +488,7 @@ void receiver_change_sample_rate(RECEIVER *rx, int sample_rate) {
     rx->sample_rate = sample_rate;
     rx->output_samples = rx->buffer_size / (rx->sample_rate / 48000);
     rx->audio_output_buffer = g_new0(gdouble, 2 * rx->output_samples);
-    rx->iq_ring_buffer.size = rx->buffer_size * 16; // 16x for I and Q
+    rx->iq_ring_buffer.size = rx->buffer_size * 8; // 16x for I and Q
     rx->iq_ring_buffer.buffer = g_new0(gdouble, rx->iq_ring_buffer.size);
     rx->iq_ring_buffer.head = 0;
     rx->iq_ring_buffer.tail = 0;
@@ -630,6 +636,8 @@ void update_frequency(RECEIVER *rx) {
 long long receiver_move_a(RECEIVER *rx,long long hz,gboolean round) {
   long long delta=0LL;
   if(!rx->locked) {
+    // Stop scroll to negative number
+    if (rx->frequency_a - hz < 0) return 0;
     if(rx->ctun) {
       delta=rx->ctun_frequency;
       rx->ctun_frequency=rx->ctun_frequency+hz;
@@ -651,6 +659,8 @@ long long receiver_move_a(RECEIVER *rx,long long hz,gboolean round) {
 
 void receiver_move_b(RECEIVER *rx,long long hz,gboolean b_only,gboolean round) {
   if(!rx->locked) {
+    // Stop scroll to negative number
+    if ((rx->frequency_b + hz) <= 0) return;
     long long f=rx->frequency_b;
     switch(rx->split) {
       case SPLIT_OFF:
@@ -747,21 +757,28 @@ void receiver_move_to(RECEIVER *rx,long long hz) {
   
     f=start+offset+(long long)((double)rx->pan*rx->hz_per_pixel);
     f=f/rx->step*rx->step;
+    
+    double cw_offset = 0;
+    if(rx->mode_a==CWL || rx->mode_a==CWU) {  
+      if(rx->mode_a==CWU) {
+        cw_offset=-radio->cw_keyer_sidetone_frequency;
+      } else {
+        cw_offset=+radio->cw_keyer_sidetone_frequency;
+      }  
+    }    
+    
     if(rx->ctun) {
       delta=rx->ctun_frequency;
-      rx->ctun_frequency=f;
+      rx->ctun_frequency=f + cw_offset;
       delta=rx->ctun_frequency-delta;
     } else {
-      if(rx->split==SPLIT_ON && (rx->mode_a==CWL || rx->mode_a==CWU)) {
-        if(rx->mode_a==CWU) {
-          f=f-radio->cw_keyer_sidetone_frequency;
-        } else {
-          f=f+radio->cw_keyer_sidetone_frequency;
-        }
-        rx->frequency_b=f;
+      if((rx->split==SPLIT_ON) && 
+         (rx->mode_a==CWL || rx->mode_a==CWU ||
+          rx->mode_a==USB || rx->mode_a==LSB)) {
+        rx->frequency_b=f + cw_offset; 
       } else {
         delta=rx->frequency_a;
-        rx->frequency_a=f;
+        rx->frequency_a=f + cw_offset;
         delta=rx->frequency_a-delta;
       }
     }
@@ -1180,18 +1197,18 @@ void add_iq_samples(RECEIVER *rx, double i_sample, double q_sample) {
     }
 
     g_mutex_lock(&rb->mutex);
-    if (rb->count >= rb->size - 2) {
-        fprintf(stderr, "add_iq_samples: ring buffer full, channel=%d, count=%d\n", rx->channel, rb->count);
-    } else {
-        rb->buffer[rb->head] = i_sample;
-        rb->buffer[rb->head + 1] = q_sample;
-        rb->head = (rb->head + 2) % rb->size;
-        rb->count += 2;
-        if (rb->count >= rx->buffer_size * 2 && ctx->iq_queue && g_async_queue_length(ctx->iq_queue) < 3) {
-            push_queue = TRUE;
-        }
+if (rb->count >= rb->size - 2) {
+    fprintf(stderr, "add_iq_samples: ring buffer full, channel=%d, count=%d\n", rx->channel, rb->count);
+} else {
+    rb->buffer[rb->head] = i_sample;
+    rb->buffer[rb->head + 1] = q_sample;
+    rb->head = (rb->head + 2) % rb->size;
+    rb->count += 2;
+    if (rb->count >= rx->buffer_size && ctx->iq_queue && g_async_queue_length(ctx->iq_queue) < 10) {
+        push_queue = TRUE;
     }
-    g_mutex_unlock(&rb->mutex);
+}
+g_mutex_unlock(&rb->mutex);
 
     if (push_queue) {
         g_async_queue_push(ctx->iq_queue, GINT_TO_POINTER(1));
