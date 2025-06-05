@@ -759,7 +759,7 @@ void receiver_move_to(RECEIVER *rx,long long hz) {
     f=f/rx->step*rx->step;
     
     double cw_offset = 0;
-    if (!rx->ctun && (rx->mode_a == CWL || rx->mode_a == CWU)) {  
+    if(rx->mode_a==CWL || rx->mode_a==CWU) {  
       if(rx->mode_a==CWU) {
         cw_offset=-radio->cw_keyer_sidetone_frequency;
       } else {
