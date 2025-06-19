@@ -262,105 +262,106 @@ GtkWidget *create_rx_panadapter(RECEIVER *rx) {
 }
 
 static void draw_static_elements(RECEIVER *rx, cairo_t *cr) {
-  int display_width = gtk_widget_get_allocated_width(rx->panadapter);
-  int display_height = gtk_widget_get_allocated_height(rx->panadapter);
-  double dbm_per_line = (double)display_height / ((double)rx->panadapter_high - (double)rx->panadapter_low);
-  char temp[32];
+    int display_width = gtk_widget_get_allocated_width(rx->panadapter);
+    int display_height = gtk_widget_get_allocated_height(rx->panadapter);
+    
+    // Calculate frequency span accounting for zoom
+    double hz_per_pixel = (double)rx->sample_rate / ((double)rx->zoom * display_width);
+    rx->hz_per_pixel = hz_per_pixel;
 
-  cairo_set_source_rgb(cr, 0.1, 0.1, 0.1);
-  cairo_rectangle(cr, 0, 0, display_width, display_height);
-  cairo_fill(cr);
+    long long span_hz = (long long)(rx->sample_rate / rx->zoom);
+    long long start_freq = rx->frequency_a - span_hz / 2;
+    long long end_freq = start_freq + span_hz;
 
-  cairo_set_line_width(cr, LINE_WIDTH);
-  cairo_set_dash(cr, dashed2, len2, 0);
-  for (int i = rx->panadapter_high; i >= rx->panadapter_low; i--) {
-    SetColour(cr, DARK_LINES);
-    int mod = abs(i) % rx->panadapter_step;
-    if (mod == 0) {
-      double y = (double)(rx->panadapter_high - i) * dbm_per_line;
-      cairo_move_to(cr, 0.0, y);
-      cairo_line_to(cr, (double)display_width, y);
-      sprintf(temp, " %d", i);
-      cairo_move_to(cr, 5, y - 1);
-      cairo_show_text(cr, temp);
-    }
-  }
-  cairo_stroke(cr);
-  cairo_set_dash(cr, 0, 0, 0);
+    char temp[32];
+    int x;
 
-  long long frequency = rx->frequency_a;
-  long long half = (long long)rx->sample_rate / 2LL;
-  long long min_display = frequency - (half / (long long)rx->zoom);
-  long long f1 = frequency - half + (long long)(rx->hz_per_pixel * rx->pan);
-  if (rx->mode_a == CWU) f1 -= radio->cw_keyer_sidetone_frequency;
-  else if (rx->mode_a == CWL) f1 += radio->cw_keyer_sidetone_frequency;
-  long long divisor1 = 20000, divisor2 = 5000;
-  long long factor = (long long)(rx->sample_rate / 48000);
-  if (factor > 10LL) factor = 10LL;
-  switch (rx->zoom) {
-    case 1: case 2: case 3:
-      divisor1 = 5000LL * factor;
-      divisor2 = 1000LL * factor;
-      break;
-    case 4: case 5: case 6:
-      divisor1 = 1000LL * factor;
-      divisor2 = 500LL * factor;
-      break;
-    case 7: case 8:
-      divisor1 = 1000LL * factor;
-      divisor2 = 200LL * factor;
-      break;
-  }
-  long long f2 = (f1 / divisor2) * divisor2;
-  int x;
-  do {
-    x = (int)((f2 - f1) / rx->hz_per_pixel);
-    if (x > 70) {
-      if ((f2 % divisor1) == 0LL) {
-        SetColour(cr, DARK_LINES);
-        cairo_move_to(cr, (double)x, 0);
-        cairo_line_to(cr, (double)x, (double)display_height - 20);
-        SetColour(cr, TEXT_B);
-        cairo_line_to(cr, (double)x, (double)display_height);
-        cairo_stroke(cr);
-        sprintf(temp, "%0lld.%03lld", f2 / 1000000, (f2 % 1000000) / 1000);
-        cairo_text_extents_t extents;
-        cairo_text_extents(cr, temp, &extents);
-        cairo_move_to(cr, (double)x - (extents.width / 2.0), display_height - 6);
-        cairo_show_text(cr, temp);
-      } else if ((f2 % divisor2) == 0LL) {
-        SetColour(cr, DARK_LINES);
-        cairo_set_dash(cr, dashed2, len2, 0);
-        cairo_move_to(cr, (double)x, 0);
-        cairo_line_to(cr, (double)x, (double)display_height - 20);
-        cairo_stroke(cr);
-        cairo_set_dash(cr, 0, 0, 0);
-      }
-    }
-    f2 += divisor2;
-  } while (x < display_width);
+    // Draw background
+    cairo_set_source_rgb(cr, 0.1, 0.1, 0.1);
+    cairo_rectangle(cr, 0, 0, display_width, display_height);
+    cairo_fill(cr);
 
-  BAND *band = band_get_band(rx->band_a);
-  if (band->frequencyMin != 0LL && rx->band_a != band60) {
-    SetColour(cr, WARNING);
-    cairo_set_line_width(cr, 2.0);
-    long long max_display = min_display + (long long)(display_width * rx->hz_per_pixel);
-    if (min_display < band->frequencyMin && max_display > band->frequencyMin) {
-      int i = (int)(((double)band->frequencyMin - (double)min_display) / rx->hz_per_pixel);
-      cairo_move_to(cr, (double)i, 0.0);
-      cairo_line_to(cr, (double)i, (double)display_height - 20);
-      cairo_stroke(cr);
-    }
-    if (min_display < band->frequencyMax && max_display > band->frequencyMax) {
-      int i = (int)(((double)band->frequencyMax - (double)min_display) / rx->hz_per_pixel);
-      cairo_move_to(cr, (double)i, 0.0);
-      cairo_line_to(cr, (double)i, (double)display_height - 20);
-      cairo_stroke(cr);
-    }
+    // Draw dBm grid lines
     cairo_set_line_width(cr, LINE_WIDTH);
-  }
-}
+    cairo_set_dash(cr, dashed2, len2, 0);
+    double dbm_per_pixel = (double)display_height / (rx->panadapter_high - rx->panadapter_low);
+    for (int i = rx->panadapter_high; i >= rx->panadapter_low; i--) {
+        if (i % rx->panadapter_step == 0) {
+            double y = (double)(rx->panadapter_high - i) * dbm_per_pixel;
+            SetColour(cr, DARK_LINES);
+            cairo_move_to(cr, 0.0, y);
+            cairo_line_to(cr, (double)display_width, y);
+            sprintf(temp, "%d", i);
+            cairo_move_to(cr, 5, y - 1);
+            cairo_show_text(cr, temp);
+        }
+    }
+    cairo_stroke(cr);
+    cairo_set_dash(cr, 0, 0, 0);
 
+    // Frequency grid lines - fixed step sizes based on zoom groups
+    long long step;
+    if (rx->zoom <= 3) {          // Zooms 1-3: 10kHz steps
+        step = 10000LL;
+    } else if (rx->zoom <= 6) {   // Zooms 4-6: 5kHz steps
+        step = 5000LL;
+    } else {                      // Zooms 7-8: 1kHz steps
+        step = 1000LL;
+    }
+
+    // Round start frequency to nearest step
+    long long f = ((start_freq + step/2) / step) * step;    
+    // Draw grid lines
+    while (f <= end_freq) {
+        x = (int)((f - start_freq) / hz_per_pixel);
+        
+        if (x >= 70 && x < display_width - 70) { // Keep labels away from edges
+            // Grid line
+            SetColour(cr, DARK_LINES);
+            cairo_move_to(cr, (double)x, 0);
+            cairo_line_to(cr, (double)x, display_height - 20);
+            
+            // Frequency label - full frequency without decimals
+            SetColour(cr, TEXT_B);
+            sprintf(temp, "%lld", f); // Show full frequency (e.g. "14070000")
+            
+            // For readability, we'll format it as kHz when appropriate
+            if (f >= 1000000LL) {
+                // For MHz frequencies, show all digits (e.g. "14070000" becomes "14070")
+                // This keeps the same format you had before but without decimal
+                sprintf(temp, "%lld", f/1000LL); 
+            }
+            
+            cairo_text_extents_t extents;
+            cairo_text_extents(cr, temp, &extents);
+            cairo_move_to(cr, (double)x - (extents.width / 2.0), display_height - 6);
+            cairo_show_text(cr, temp);
+            cairo_stroke(cr);
+        }
+        f += step;
+    }
+
+    // Draw band edges
+    BAND *band = band_get_band(rx->band_a);
+    if (band->frequencyMin != 0LL && rx->band_a != band60) {
+        SetColour(cr, WARNING);
+        cairo_set_line_width(cr, 2.0);
+        long long max_display = start_freq + (long long)(display_width * hz_per_pixel);
+        if (start_freq < band->frequencyMin && max_display > band->frequencyMin) {
+            x = (int)((band->frequencyMin - start_freq) / hz_per_pixel);
+            cairo_move_to(cr, (double)x, 0.0);
+            cairo_line_to(cr, (double)x, display_height - 20);
+            cairo_stroke(cr);
+        }
+        if (start_freq < band->frequencyMax && max_display > band->frequencyMax) {
+            x = (int)((band->frequencyMax - start_freq) / hz_per_pixel);
+            cairo_move_to(cr, (double)x, 0.0);
+            cairo_line_to(cr, (double)x, display_height - 20);
+            cairo_stroke(cr);
+        }
+        cairo_set_line_width(cr, LINE_WIDTH);
+    }
+}
 // Define maximum number of points to process (same as panadapter for consistency)
 #define MAX_PLOT_POINTS 640
 
@@ -391,6 +392,7 @@ void update_rx_panadapter(RECEIVER *rx, gboolean running) {
         px->width != display_width ||
         px->height != display_height ||
         px->zoom != rx->zoom ||
+        px->pan != rx->pan || 
         px->frequency_a != rx->frequency_a ||
         px->sample_rate != rx->sample_rate ||
         px->band_a != rx->band_a ||

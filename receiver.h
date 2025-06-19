@@ -62,6 +62,7 @@ typedef struct {
   long long frequency_a;
   int sample_rate;
   int band_a;
+  int pan;
   int panadapter_high;
   int panadapter_low;
   int panadapter_step;
