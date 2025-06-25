@@ -265,13 +265,14 @@ static void draw_static_elements(RECEIVER *rx, cairo_t *cr) {
     int display_width = gtk_widget_get_allocated_width(rx->panadapter);
     int display_height = gtk_widget_get_allocated_height(rx->panadapter);
     
-    // Calculate frequency span accounting for zoom
-    double hz_per_pixel = (double)rx->sample_rate / ((double)rx->zoom * display_width);
+    // Correct frequency calculation accounting for zoom and pan
+    double hz_per_pixel = (double)rx->sample_rate / (double)(display_width * rx->zoom);
     rx->hz_per_pixel = hz_per_pixel;
 
-    long long span_hz = (long long)(rx->sample_rate / rx->zoom);
-    long long start_freq = rx->frequency_a - span_hz / 2;
-    long long end_freq = start_freq + span_hz;
+    // Calculate visible frequency span
+    long long visible_span_hz = (long long)(display_width * hz_per_pixel);
+    long long start_freq = rx->frequency_a - (long long)((rx->pixels / 2.0 - rx->pan) * hz_per_pixel);
+    long long end_freq = start_freq + visible_span_hz;
 
     char temp[32];
     int x;
@@ -313,28 +314,28 @@ static void draw_static_elements(RECEIVER *rx, cairo_t *cr) {
     long long f = ((start_freq + step/2) / step) * step;    
     // Draw grid lines
     while (f <= end_freq) {
-        x = (int)((f - start_freq) / hz_per_pixel);
+        double x = ((double)(f - start_freq) / hz_per_pixel);
         
         if (x >= 70 && x < display_width - 70) { // Keep labels away from edges
             // Grid line
             SetColour(cr, DARK_LINES);
-            cairo_move_to(cr, (double)x, 0);
-            cairo_line_to(cr, (double)x, display_height - 20);
+            cairo_move_to(cr, x, 0);
+            cairo_line_to(cr, x, display_height - 20);
             
-            // Frequency label - full frequency without decimals
+            // Frequency label
             SetColour(cr, TEXT_B);
-            sprintf(temp, "%lld", f); // Show full frequency (e.g. "14070000")
-            
-            // For readability, we'll format it as kHz when appropriate
+            char temp[32];
             if (f >= 1000000LL) {
-                // For MHz frequencies, show all digits (e.g. "14070000" becomes "14070")
-                // This keeps the same format you had before but without decimal
-                sprintf(temp, "%lld", f/1000LL); 
+                // Show MHz.kHz when >= 1MHz
+                sprintf(temp, "%lld.%03lld", f/1000000LL, (f%1000000LL)/1000LL);
+            } else {
+                // Show kHz when < 1MHz
+                sprintf(temp, "%lld", f/1000LL);
             }
             
             cairo_text_extents_t extents;
             cairo_text_extents(cr, temp, &extents);
-            cairo_move_to(cr, (double)x - (extents.width / 2.0), display_height - 6);
+            cairo_move_to(cr, x - (extents.width / 2.0), display_height - 6);
             cairo_show_text(cr, temp);
             cairo_stroke(cr);
         }
